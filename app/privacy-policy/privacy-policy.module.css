@@ -1,0 +1,44 @@
+.page { min-height: 100svh; background: #f5f3ed; color: #24251f; font-family: var(--font-inter), Arial, sans-serif; }
+.header { height: 82px; padding: 0 max(6vw, calc((100vw - 1240px) / 2)); display: flex; align-items: center; justify-content: space-between; background: #171816; color: #fff; }
+.brand { display: flex; align-items: center; gap: 11px; color: inherit; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-decoration: none; }
+.brand i { color: #ffffffa8; font-style: normal; }
+.brandMark { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #ffffff5c; border-radius: 50%; font: 700 12px Georgia, serif; letter-spacing: .04em; }
+.homeLink { color: #ffffffcf; font-size: 11px; text-decoration: none; }.homeLink:hover { color: #ff747c; }
+.hero { padding: 74px 24px 58px; background: #1b1d1a; color: #f8f6f0; text-align: center; }
+.eyebrow { margin: 0 0 20px; color: #ff7079; font-size: 10px; font-weight: 700; letter-spacing: .2em; }
+.hero h1 { margin: 0; font: 400 clamp(43px, 6vw, 76px)/.98 Georgia, 'Times New Roman', serif; letter-spacing: -.045em; }
+.hero h1 em { color: #f05b64; font-weight: 400; }
+.intro { max-width: 630px; margin: 22px auto 0; color: #ffffffb8; font-size: 14px; line-height: 1.8; }
+.updated { margin: 24px 0 0; color: #ffffff75; font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+.contentLayout { width: min(1080px, calc(100% - 48px)); margin: 0 auto; padding: 58px 0 85px; display: grid; grid-template-columns: 210px minmax(0, 1fr); align-items: start; gap: clamp(40px, 7vw, 94px); }
+.contents { position: sticky; top: 30px; display: flex; flex-direction: column; gap: 5px; padding: 17px 0; border-top: 1px solid #d9d6cd; }
+.contents p { margin: 0 0 9px; color: #8d302f; font-size: 9px; font-weight: 750; letter-spacing: .17em; }
+.contents a { padding: 8px 0; color: #64655f; font-size: 12px; line-height: 1.4; text-decoration: none; }.contents a:hover { color: #b22c36; }
+.article { min-width: 0; }
+.article section { position: relative; padding: 0 0 33px; margin: 0 0 34px; border-bottom: 1px solid #dedbd3; scroll-margin-top: 26px; }
+.sectionNumber { display: block; margin-bottom: 9px; color: #b22c36; font-size: 9px; font-weight: 750; letter-spacing: .17em; }
+.article h2 { margin: 0 0 15px; color: #22231f; font: 400 31px/1.15 Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
+.article p,.article li { color: #585a53; font-size: 14px; line-height: 1.85; }
+.article p { margin: 0 0 14px; }.article p:last-child { margin-bottom: 0; }
+.article strong { color: #34352f; font-weight: 650; }
+.article ul { margin: 0; padding-left: 20px; }.article li { padding-left: 4px; margin: 0 0 11px; }.article li:last-child { margin-bottom: 0; }
+.externalLink { display: inline-flex; align-items: center; gap: 7px; margin-top: 15px; color: #9c2831; font-size: 12px; font-weight: 650; text-underline-offset: 4px; }.externalLink:hover { color: #681c22; }
+.articleEnd { display: flex; align-items: center; gap: 13px; padding-top: 4px; color: #6b6c66; }
+.articleEnd > span { color: #a42b34; font: 700 21px Georgia, serif; }.articleEnd p { margin: 0; font-size: 8px; letter-spacing: .13em; }
+.articleEnd a { margin-left: auto; color: #353630; font-size: 11px; text-decoration: none; }.articleEnd a:hover { color: #a42b34; }
+.footer { min-height: 70px; padding: 15px max(6vw, calc((100vw - 1240px) / 2)); display: flex; align-items: center; justify-content: space-between; gap: 15px; background: #171816; color: #ffffff85; font-size: 9px; letter-spacing: .12em; }
+.footer a { color: #fff; text-decoration: none; }.footer a:hover { color: #ff747c; }
+@media (max-width: 760px) {
+  .header { height: 70px; padding: 0 22px; }
+  .hero { padding: 62px 25px 47px; }.intro { font-size: 13px; }
+  .contentLayout { width: min(100% - 42px, 620px); padding: 36px 0 58px; grid-template-columns: 1fr; gap: 24px; }
+  .contents { position: static; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; padding: 14px 0 12px; }
+  .contents p { grid-column: 1 / -1; }
+  .article h2 { font-size: 28px; }.article p,.article li { font-size: 13px; }
+  .footer { padding: 18px 21px; flex-wrap: wrap; font-size: 8px; }
+}
+@media (max-width: 420px) {
+  .homeLink { font-size: 10px; }
+  .contents { grid-template-columns: 1fr; }
+  .articleEnd { flex-wrap: wrap; }.articleEnd a { width: 100%; margin: 2px 0 0; }
+}

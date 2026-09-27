@@ -44,9 +44,9 @@ export default function OrdersPage() {
   const [serviceDate, setServiceDate] = useState(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()));
   useEffect(() => {
     let active = true;
+    const supabase = createClient();
     async function loadOrders() {
       try {
-        const supabase = createClient();
         const { data, error } = await supabase.from('orders').select('id,order_number,customer_name,table_label,status,subtotal,created_at,order_items(item_name,quantity)').order('created_at', { ascending: false }).limit(500);
         if (error) throw error;
         if (active) {
@@ -58,7 +58,10 @@ export default function OrdersPage() {
       } finally { if (active) setLoading(false); }
     }
     void loadOrders();
-    return () => { active = false; };
+    const channel = supabase.channel('rms-orders-board')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => { void loadOrders(); })
+      .subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
   }, []);
   const [selected, setSelected] = useState<Order | null>(null);
   const [notice, setNotice] = useState('');

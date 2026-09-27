@@ -1,5 +1,5 @@
 .authPage { --auth-red:#d82736; --auth-paper:#171816; display:grid; grid-template-columns:minmax(0,1.08fr) minmax(480px,.92fr); min-height:100svh; color:#f7f6f2; background:#171816; font-family:var(--font-inter),Arial,sans-serif; }
-.photoPanel { position:sticky; top:0; height:100svh; min-height:680px; overflow:hidden; color:white; background:#201f1b url('https://images.unsplash.com/photo-1555939594-58d7cb561ad1?auto=format&fit=crop&w=1900&q=88') center/cover; }
+.photoPanel { position:sticky; top:0; height:100svh; min-height:680px; overflow:hidden; color:white; background:#201f1b radial-gradient(ellipse at 72% 40%,#79533d 0%,transparent 42%),linear-gradient(140deg,#28231d,#111311); }
 .photoOverlay { position:absolute; inset:0; background:linear-gradient(90deg,#111310b5 0%,#11131063 48%,#1113105c 100%),linear-gradient(0deg,#111310e8 0%,transparent 56%); }
 .brand { position:absolute; z-index:1; top:30px; left:clamp(27px,4.2vw,62px); display:flex; align-items:center; gap:11px; color:white; font-size:10px; font-weight:750; letter-spacing:.12em; text-decoration:none; }.brand img { width:48px; height:48px; object-fit:contain; }.brand i { margin-left:4px; color:#ffffffa8; font-size:8px; font-style:normal; font-weight:550; letter-spacing:.16em; }
 .story { position:absolute; z-index:1; left:clamp(30px,6vw,92px); right:32px; bottom:clamp(90px,14vh,150px); }.kicker { display:flex; align-items:center; gap:10px; color:#ffffffc5; font-size:8px; font-weight:650; letter-spacing:.19em; }.kicker i { width:7px; height:7px; border-radius:50%; background:var(--auth-red); box-shadow:0 0 14px #ed304680; }.story h2 { margin:21px 0 0; font:400 clamp(55px,6.3vw,92px)/.96 Georgia,'Times New Roman',serif; letter-spacing:-.055em; }.story h2 em { color:#f04a53; font-style:italic; }.story p { margin:20px 0 0; color:#ffffffc2; font-size:12px; line-height:1.8; }.photoCaption { position:absolute; z-index:1; bottom:25px; left:clamp(30px,6vw,92px); color:#ffffff9c; font-size:7px; letter-spacing:.18em; }
@@ -28,10 +28,12 @@
 .story p { color:#ffffffed; font-size:16px; line-height:1.65; }
 .photoCaption { color:#ffffffd8; font-size:12px; letter-spacing:.12em; }
 .formFooter { color:#ffffffad; font-size:12px; letter-spacing:.1em; }
+.formFooter a { color:#ffffffd0; text-decoration:underline; text-decoration-color:#ffffff70; text-underline-offset:3px; }
 .formSubtitle { color:#ffffffd8; font-size:16px; line-height:1.6; }
 .formTitle em,.formEyebrow { color:#ff777f; }
 .formFooterLink { color:#ffffffd0; font-size:14px; }
 .formFooterLink a { color:#ff6971; }
+.formPrivacyNote { margin:13px 0 0; color:#ffffffb8; font-size:12px; line-height:1.6; text-align:center; }.formPrivacyNote a { color:#ff8b92; text-underline-offset:3px; }
 .formEyebrow,.stepTitle,.demoCredentials strong { font-size:14px; }
 .demoCredentials { margin-bottom:18px; padding:13px 14px; color:#ffffffdc; font-size:14px; line-height:1.55; }
 .stepCard { margin:16px 0; padding:16px; }

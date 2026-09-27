@@ -1,20 +1,23 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Search, Bell } from 'lucide-react';
+import Image from 'next/image';
+import { Search } from 'lucide-react';
 import { MobileSidebar } from './Sidebar';
+import type { RmsProfileView } from '@/lib/rms-profile';
 
 interface HeaderProps {
   searchPlaceholder?: string;
+  profile: RmsProfileView;
 }
 
-export function Header({ searchPlaceholder = 'Search orders, staff, menu items...' }: HeaderProps) {
+export function Header({ searchPlaceholder = 'Search orders, staff, menu items...', profile }: HeaderProps) {
   const [searchValue, setSearchValue] = useState('');
 
   return (
     <header className="bg-[#fffefa] border-b border-[#e6e2d9] px-3 sm:px-6 py-3 flex items-center gap-3 sm:gap-4 sticky top-0 z-40">
       {/* Mobile menu trigger */}
-      <MobileSidebar />
+      <MobileSidebar profile={profile} />
 
       {/* Search */}
       <div className="flex-1 max-w-lg">
@@ -32,23 +35,14 @@ export function Header({ searchPlaceholder = 'Search orders, staff, menu items..
       </div>
 
       {/* Right side */}
-      <div className="ml-auto flex items-center gap-3">
-        {/* Notification bell */}
-        <button type="button" aria-label="Notifications, 5 unread" className="relative flex h-11 w-11 items-center justify-center text-[#4d5858] hover:bg-[#f3f1ec] rounded-lg transition-colors">
-          <Bell size={20} aria-hidden="true" />
-          <span aria-hidden="true" className="absolute top-0.5 right-0.5 min-w-5 h-5 px-1 bg-[#D92F2F] text-white text-xs font-bold rounded-full flex items-center justify-center leading-none">
-            5
-          </span>
-        </button>
-
-        {/* User */}
-        <div className="flex items-center gap-2.5 pl-3 border-l border-[#e6e2d9]">
-          <div className="w-10 h-10 rounded-full bg-[#D92F2F] flex items-center justify-center text-white text-sm font-bold flex-shrink-0" aria-hidden="true">
-            AU
+      <div className="ml-auto flex items-center">
+        <div className="flex items-center gap-2.5 border-l border-[#e6e2d9] pl-3">
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#D92F2F] text-sm font-bold text-white" aria-hidden="true">
+            {profile.avatarUrl ? <Image src={profile.avatarUrl} alt="" width={40} height={40} unoptimized className="h-full w-full object-cover" /> : (profile.fullName || profile.email || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase()}
           </div>
           <div className="hidden sm:block">
-            <p className="text-sm font-semibold text-[#202b2f] leading-tight">Admin User</p>
-            <p className="text-sm text-[#66716e] leading-tight">System Supervisor</p>
+            <p className="max-w-40 truncate text-sm font-semibold leading-tight text-[#202b2f]">{profile.fullName || profile.email || 'HBA account'}</p>
+            <p className="text-sm leading-tight text-[#66716e]">{profile.role}</p>
           </div>
         </div>
       </div>

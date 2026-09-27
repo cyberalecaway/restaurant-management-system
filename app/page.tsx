@@ -1,32 +1,24 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { AnimatePresence, motion, useReducedMotion, useScroll, useTransform } from 'framer-motion';
 import Lenis from 'lenis';
 import { ArrowDown, ArrowRight, Check, ChefHat, ChevronRight, Clock3, Minus, Plus, ShoppingBag, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { MobileSidebar, Sidebar } from '@/components/layout/Sidebar';
 import { getAuthSnapshot, setLocalAuthIndicator, signOutSupabase, subscribeToAuth } from '@/lib/auth-session';
 import styles from './landing.module.css';
 import { createClient } from '@/lib/supabase/client';
 import { validateOrderItems } from '@/lib/input-validation.mjs';
 import { useOnlineStatus } from '@/lib/use-online-status';
+import { MenuPhoto } from '@/components/menu/MenuPhoto';
+import { SignOutDialog } from '@/components/auth/SignOutDialog';
 
-type Product = { id: string; name: string; description: string; price: number; image: string; category: string };
+type Product = { id: string; name: string; description: string; price: number; image: string; category: string; availability: 'Available' | 'Sold Out'; stockQuantity: number };
 
-const imageUrl = (src: string) => {
-  if (!src) return '/hbatube_logo.png.png';
-  if (src.startsWith('/')) return src;
-  try {
-    const url = new URL(src);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? src : '/hbatube_logo.png.png';
-  } catch {
-    return '/hbatube_logo.png.png';
-  }
-};
 const categoryId = (category: string) => `menu-${category.toLocaleLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-const MENU_CACHE_KEY = 'hba-menu-cache-v1';
+const MENU_CACHE_KEY = 'hba-menu-cache-v2';
 const CART_CACHE_KEY = 'hba-cart-v1';
 const CHECKOUT_KEY = 'hba-checkout-key-v1';
 
@@ -34,7 +26,7 @@ function readCachedMenu(): Product[] {
   try {
     const cached: unknown = JSON.parse(window.localStorage.getItem(MENU_CACHE_KEY) ?? '[]');
     if (!Array.isArray(cached) || cached.length > 500) return [];
-    return cached.filter((item): item is Product => item && typeof item.id === 'string' && typeof item.name === 'string' && typeof item.category === 'string' && typeof item.description === 'string' && Number.isFinite(Number(item.price)) && typeof item.image === 'string');
+    return cached.filter((item): item is Product => item && typeof item.id === 'string' && typeof item.name === 'string' && typeof item.category === 'string' && typeof item.description === 'string' && Number.isFinite(Number(item.price)) && typeof item.image === 'string' && Number.isInteger(item.stockQuantity) && item.stockQuantity >= 0 && (item.availability === 'Available' || item.availability === 'Sold Out'));
   } catch {
     return [];
   }
@@ -53,6 +45,9 @@ export default function Home() {
   const [checkingOut, setCheckingOut] = useState(false);
   const [cartOpen, setCartOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
   const [activeCategory, setActiveCategory] = useState('Featured');
   const [toast, setToast] = useState('');
   const [scrolled, setScrolled] = useState(false);
@@ -93,10 +88,10 @@ export default function Home() {
       }
       try {
         const supabase = createClient();
-        const { data, error } = await supabase.from('menu_items').select('id,name,description,price,image_url,category,availability').eq('availability', 'Available').order('name').limit(500);
+        const { data, error } = await supabase.from('menu_items').select('id,name,description,price,image_url,category,availability,stock_quantity').order('name').limit(500);
         if (error) throw error;
         if (!active) return;
-        const productsFromDatabase = (data ?? []).map(row => ({ id: row.id, name: row.name, description: row.description, price: Number(row.price), image: row.image_url ?? '', category: row.category }));
+        const productsFromDatabase = (data ?? []).map(row => ({ id: row.id, name: row.name, description: row.description, price: Number(row.price), image: row.image_url ?? '', category: row.category, availability: row.availability, stockQuantity: Number(row.stock_quantity ?? 0) }));
         setProducts(productsFromDatabase);
         setMenuIsStale(false);
         try { window.localStorage.setItem(MENU_CACHE_KEY, JSON.stringify(productsFromDatabase)); } catch { /* Browsing still works when storage is unavailable. */ }
@@ -113,6 +108,20 @@ export default function Home() {
     }
     const timer = window.setTimeout(() => { void loadMenu(); }, 0);
     return () => { active = false; window.clearTimeout(timer); };
+  }, [online]);
+
+  useEffect(() => {
+    if (!online) return;
+    const supabase = createClient();
+    let active = true;
+    const channel = supabase.channel('customer-menu-stock').on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, async () => {
+      const { data, error } = await supabase.from('menu_items').select('id,name,description,price,image_url,category,availability,stock_quantity').order('name').limit(500);
+      if (error || !active) return;
+      const current = (data ?? []).map(row => ({ id: row.id, name: row.name, description: row.description, price: Number(row.price), image: row.image_url ?? '', category: row.category, availability: row.availability, stockQuantity: Number(row.stock_quantity ?? 0) }));
+      setProducts(current);
+      try { window.localStorage.setItem(MENU_CACHE_KEY, JSON.stringify(current)); } catch { /* Browsing remains available if storage is blocked. */ }
+    }).subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
   }, [online]);
 
   useEffect(() => {
@@ -136,13 +145,25 @@ export default function Home() {
   }, [cart, cartHydrated]);
 
   useEffect(() => {
+    if (!cartHydrated) return;
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.searchParams.get('openCart') !== '1') return;
+    const timer = window.setTimeout(() => {
+      setCartOpen(true);
+      currentUrl.searchParams.delete('openCart');
+      window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [cartHydrated]);
+
+  useEffect(() => {
     if (!authenticated) return;
     let pendingId: string | null = null;
     try { pendingId = window.localStorage.getItem('hba-pending-product'); } catch { return; }
-    const pendingProduct = products.find((product) => product.id === pendingId);
+    const pendingProduct = products.find((product) => product.id === pendingId && product.availability === 'Available' && product.stockQuantity > 0);
     if (pendingProduct) {
       const timer = window.setTimeout(() => {
-        setCart(current => ({ ...current, [pendingProduct.id]: Math.min(99, (current[pendingProduct.id] ?? 0) + 1) }));
+        setCart(current => ({ ...current, [pendingProduct.id]: Math.min(99, pendingProduct.stockQuantity, (current[pendingProduct.id] ?? 0) + 1) }));
         setToast(`${pendingProduct.name} added to your order`);
         try { window.localStorage.removeItem('hba-pending-product'); } catch { /* The product has already been added to in-memory cart state. */ }
       }, 0);
@@ -199,10 +220,27 @@ export default function Home() {
   const cartProducts = products.filter((product) => cart[product.id]);
 
   const signOut = async () => {
-    if (quantities > 0 && !window.confirm('Signing out will clear the items in your bag. Do you want to continue?')) return;
-    try { await signOutSupabase(); } catch { setLocalAuthIndicator(false); }
-    setCart({});
-    setMenuOpen(false);
+    if (signingOut) return;
+    setSigningOut(true);
+    setLogoutError('');
+    try {
+      await signOutSupabase();
+      setCart({});
+      setMenuOpen(false);
+      setLogoutOpen(false);
+      setToast('You have been signed out.');
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToast(''), 2800);
+    } catch {
+      setLogoutError('We could not sign you out. Check your connection and try again.');
+    } finally {
+      setSigningOut(false);
+    }
+  };
+
+  const requestSignOut = () => {
+    setLogoutError('');
+    setLogoutOpen(true);
   };
 
   const goTo = useCallback((id: string) => {
@@ -216,12 +254,16 @@ export default function Home() {
     checkoutKeyRef.current = null;
     try { window.localStorage.removeItem(CHECKOUT_KEY); } catch { /* Checkout remains protected for this page session. */ }
     setCart((current) => {
-      const next = { ...current, [id]: Math.min(99, Math.max(0, (current[id] ?? 0) + amount)) };
+      const product = products.find(item => item.id === id);
+      const limit = product ? Math.min(99, product.stockQuantity) : 99;
+      const next = { ...current, [id]: Math.min(limit, Math.max(0, (current[id] ?? 0) + amount)) };
       if (!next[id]) delete next[id];
       return next;
     });
   };
   const addToCart = async (product: Product) => {
+    if (product.availability !== 'Available' || product.stockQuantity <= 0) { setToast(`${product.name} is sold out`); return; }
+    if ((cart[product.id] ?? 0) >= Math.min(99, product.stockQuantity)) { setToast(`Only ${product.stockQuantity} servings of ${product.name} are available`); return; }
     if (!online) {
       if (!authenticated) { setMenuError('You are offline. Sign in while connected before starting an order.'); return; }
       changeQuantity(product.id, 1);
@@ -252,6 +294,8 @@ export default function Home() {
   const submitOrder = async () => {
     if (!online) { setCheckoutError('You are offline. Your order has not been sent. Reconnect and try again.'); return; }
     if (menuIsStale) { setCheckoutError('Refresh the menu while online to confirm current prices and availability before ordering.'); return; }
+    const unavailable = cartProducts.find(product => product.availability !== 'Available' || cart[product.id] > product.stockQuantity);
+    if (unavailable) { setCheckoutError(`${unavailable.name} has only ${unavailable.stockQuantity} servings available. Please update your bag.`); return; }
     const orderItems = cartProducts.map(product => ({ menu_item_id: product.id, quantity: cart[product.id] }));
     const validationError = validateOrderItems(orderItems);
     if (validationError) { setCheckoutError(validationError); return; }
@@ -276,6 +320,12 @@ export default function Home() {
       }
       const created = Array.isArray(data) ? data[0] : data;
       setCart({});
+      const { data: refreshedMenu } = await supabase.from('menu_items').select('id,name,description,price,image_url,category,availability,stock_quantity').order('name').limit(500);
+      if (refreshedMenu) {
+        const current = refreshedMenu.map(row => ({ id: row.id, name: row.name, description: row.description, price: Number(row.price), image: row.image_url ?? '', category: row.category, availability: row.availability, stockQuantity: Number(row.stock_quantity ?? 0) }));
+        setProducts(current);
+        try { window.localStorage.setItem(MENU_CACHE_KEY, JSON.stringify(current)); } catch { /* The visible menu is still updated in memory. */ }
+      }
       checkoutKeyRef.current = null;
       try { window.localStorage.removeItem(CHECKOUT_KEY); } catch { /* The saved bag is cleared below. */ }
       setCartOpen(false);
@@ -293,20 +343,19 @@ export default function Home() {
 
   const nav = [['HOME', 'home'], ['MENU', 'menu'], ['ABOUT', 'about'], ['CONTACT', 'contact']];
   return (
-    <div className={authenticated ? styles.loggedInFrame : styles.loggedOutFrame}>
-      {authenticated && <Sidebar />}
+    <div className={styles.loggedOutFrame}>
       <div className={styles.page}>
       <header inert={cartOpen} className={`${styles.navbar} ${scrolled ? styles.navbarScrolled : ''}`}>
         <div className={styles.navInner}>
-          {authenticated && <div className={styles.adminMenuTrigger}><MobileSidebar /></div>}
           <a className={styles.logoLink} href="#home" aria-label="HBA home" onClick={(event) => { event.preventDefault(); goTo('home'); }}>
             <Image src="/hbatube_logo.png.png" alt="HBA" width={512} height={512} priority className={styles.navLogo} />
           </a>
           <nav className={styles.desktopNav} aria-label="Main navigation">
-            {nav.map(([label, id]) => <button key={id} className={styles.navLink} onClick={() => goTo(id)}>{label}</button>)}
+            {nav.map(([label, id]) => <button key={id} className={styles.navLink} onClick={() => { if (id === 'contact') router.push('/contact'); else goTo(id); }}>{label}</button>)}
           </nav>
+          {authenticated && <Link className={styles.authLink} href="/my-orders">MY ORDERS</Link>}
           <button className={styles.authLink} onClick={() => {
-            if (authenticated) signOut();
+            if (authenticated) requestSignOut();
             else router.push('/login?next=%2F');
           }}>{authenticated ? 'SIGN OUT' : 'SIGN IN'}</button>
           <button className={styles.cartButton} onClick={openCart} aria-label={`Open cart, ${quantities} items`}>
@@ -317,8 +366,9 @@ export default function Home() {
           </button>
         </div>
         <AnimatePresence>{menuOpen && <motion.nav className={styles.mobileNav} initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} aria-label="Mobile navigation">
-          {nav.map(([label, id], index) => <motion.button key={id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.045 }} onClick={() => goTo(id)}>{label}<ArrowRight size={16} /></motion.button>)}
-          <motion.button key="auth" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} onClick={() => { if (authenticated) signOut(); else { setMenuOpen(false); router.push('/login?next=%2F'); } }}>{authenticated ? 'SIGN OUT' : 'SIGN IN'}<ArrowRight size={16} /></motion.button>
+          {nav.map(([label, id], index) => <motion.button key={id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: index * 0.045 }} onClick={() => { setMenuOpen(false); if (id === 'contact') router.push('/contact'); else goTo(id); }}>{label}<ArrowRight size={16} /></motion.button>)}
+          {authenticated && <motion.button key="my-orders" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} onClick={() => { setMenuOpen(false); router.push('/my-orders'); }}>MY ORDERS<ArrowRight size={16} /></motion.button>}
+          <motion.button key="auth" initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} onClick={() => { if (authenticated) requestSignOut(); else { setMenuOpen(false); router.push('/login?next=%2F'); } }}>{authenticated ? 'SIGN OUT' : 'SIGN IN'}<ArrowRight size={16} /></motion.button>
         </motion.nav>}</AnimatePresence>
       </header>
 
@@ -368,12 +418,13 @@ export default function Home() {
               <div className={styles.productGrid}>
                 {items.map((product, index) => <motion.article className={styles.productCard} key={product.id} initial={{ opacity: 0, y: 28 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.18 }} transition={{ duration: 0.55, delay: index * 0.07 }}>
                   <div className={styles.productImageWrap}>
-                    <Image src={imageUrl(product.image)} alt={product.name} width={900} height={700} unoptimized className={styles.productImage} sizes="(max-width: 680px) 90vw, (max-width: 1000px) 45vw, 30vw" />
+                    <MenuPhoto source={product.image} alt={product.name} className={styles.productImage} sizes="(max-width: 680px) 90vw, (max-width: 1000px) 45vw, 30vw" fallbackClassName={styles.imagePending} fallback={<><ChefHat size={22} aria-hidden="true" /><span>PHOTO TO BE ADDED</span></>} />
                     {cart[product.id] ? <span className={styles.inBag}><Check size={12} /> IN YOUR BAG · {cart[product.id]}</span> : null}
                   </div>
                   <div className={styles.productInfo}><div className={styles.productTitle}><h4>{product.name}</h4><span>₱{product.price}</span></div><p>{product.description}</p>
-                    <div className={styles.productActions}>{cart[product.id] ? <div className={styles.quantityControl}><button onClick={() => changeQuantity(product.id, -1)} aria-label={`Remove one ${product.name}`}><Minus size={14} /></button><span>{cart[product.id]}</span><button disabled={cart[product.id] >= 99} onClick={() => changeQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus size={14} /></button></div> : <span className={styles.freshNote}><Clock3 size={13} /> MADE TO ORDER</span>}
-                      <button className={styles.addButton} onClick={() => addToCart(product)}>{cart[product.id] ? 'ADD ANOTHER' : 'ADD TO BAG'}<Plus size={14} /></button></div>
+                    <p className={styles.freshNote}>{product.availability !== 'Available' || product.stockQuantity === 0 ? 'SOLD OUT' : `${product.stockQuantity} servings available`}</p>
+                    <div className={styles.productActions}>{cart[product.id] ? <div className={styles.quantityControl}><button onClick={() => changeQuantity(product.id, -1)} aria-label={`Remove one ${product.name}`}><Minus size={14} /></button><span>{cart[product.id]}</span><button disabled={cart[product.id] >= Math.min(99, product.stockQuantity)} onClick={() => changeQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus size={14} /></button></div> : <span className={styles.freshNote}><Clock3 size={13} /> MADE TO ORDER</span>}
+                      <button className={styles.addButton} disabled={product.availability !== 'Available' || product.stockQuantity === 0 || (cart[product.id] ?? 0) >= Math.min(99, product.stockQuantity)} onClick={() => addToCart(product)}>{product.availability !== 'Available' || product.stockQuantity === 0 ? 'SOLD OUT' : cart[product.id] ? 'ADD ANOTHER' : 'ADD TO BAG'}<Plus size={14} /></button></div>
                   </div>
                 </motion.article>)}
               </div>
@@ -388,15 +439,24 @@ export default function Home() {
         </section>
       </main>
 
-      <footer inert={cartOpen} className={styles.footer} id="contact"><span className={styles.footerBrand}>HBA</span><span>GOOD FOOD, GOOD COMPANY.</span><a href="#home" onClick={(event) => { event.preventDefault(); goTo('home'); }}>BACK TO TOP ↑</a><small>© 2026 HBA KITCHEN · MADE WITH CARE.</small></footer>
+      <footer inert={cartOpen} className={styles.footer} id="contact"><span className={styles.footerBrand}>HBA</span><span>GOOD FOOD, GOOD COMPANY.</span><nav className={styles.footerLinks} aria-label="Footer"><Link href="/privacy-policy">PRIVACY POLICY</Link><a href="#home" onClick={(event) => { event.preventDefault(); goTo('home'); }}>BACK TO TOP ↑</a></nav><small>© 2026 HBA KITCHEN · MADE WITH CARE.</small></footer>
 
       <AnimatePresence>{toast && <motion.div className={styles.toast} role="status" aria-live="polite" initial={{ opacity: 0, y: 18, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 12 }}><span><Check size={15} /></span>{toast}<button aria-label="Dismiss" onClick={() => setToast('')}><X size={14} /></button></motion.div>}</AnimatePresence>
+
+      <SignOutDialog
+        open={logoutOpen}
+        pending={signingOut}
+        error={logoutError}
+        description={quantities > 0 ? `Your bag has ${quantities} ${quantities === 1 ? 'item' : 'items'}. Signing out will clear it from this device.` : 'You can sign back in at any time to continue using your account.'}
+        onCancel={() => setLogoutOpen(false)}
+        onConfirm={() => { void signOut(); }}
+      />
 
       <AnimatePresence>{cartOpen && <>
         <motion.button className={styles.drawerBackdrop} aria-label="Close cart" onClick={() => setCartOpen(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
         <motion.aside ref={cartDrawerRef} className={styles.cartDrawer} role="dialog" aria-modal="true" aria-labelledby="cart-title" initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', damping: 32, stiffness: 300 }}>
           <div className={styles.drawerHead}><div><p className={styles.eyebrow}>THE GOOD STUFF</p><h2 id="cart-title">Your order <span>({quantities})</span></h2></div><button ref={cartCloseRef} className={styles.closeButton} onClick={() => setCartOpen(false)} aria-label="Close cart"><X size={21} /></button></div>
-          {cartProducts.length ? <><div className={styles.cartItems}>{cartProducts.map((product) => <div className={styles.cartItem} key={product.id}><Image src={imageUrl(product.image)} alt="" width={112} height={112} unoptimized /><div className={styles.cartItemCopy}><h3>{product.name}</h3><span>₱{product.price} <i>×</i> {cart[product.id]}</span><div className={styles.quantityControl}><button onClick={() => changeQuantity(product.id, -1)} aria-label={cart[product.id] === 1 ? `Remove ${product.name} from your order` : `Remove one ${product.name}`}><Minus size={13} /></button><span aria-live="polite">{cart[product.id]}</span><button disabled={cart[product.id] >= 99} onClick={() => changeQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus size={13} /></button></div></div><strong>₱{product.price * cart[product.id]}</strong></div>)}</div>
+          {cartProducts.length ? <><div className={styles.cartItems}>{cartProducts.map((product) => <div className={styles.cartItem} key={product.id}><div className={styles.cartItemPhoto}><MenuPhoto source={product.image} alt="" sizes="76px" className="object-cover" fallbackClassName={styles.cartPhotoPending} fallback="NO PHOTO" /></div><div className={styles.cartItemCopy}><h3>{product.name}</h3><span>₱{product.price} <i>×</i> {cart[product.id]}</span><div className={styles.quantityControl}><button onClick={() => changeQuantity(product.id, -1)} aria-label={cart[product.id] === 1 ? `Remove ${product.name} from your order` : `Remove one ${product.name}`}><Minus size={13} /></button><span aria-live="polite">{cart[product.id]}</span><button disabled={cart[product.id] >= 99} onClick={() => changeQuantity(product.id, 1)} aria-label={`Add one ${product.name}`}><Plus size={13} /></button></div></div><strong>₱{product.price * cart[product.id]}</strong></div>)}</div>
             <div className={styles.drawerBottom}><div className={styles.subtotal}><span>Subtotal</span><strong>₱{subtotal}</strong></div><p>Taxes and delivery calculated at checkout.</p>{(!online || menuIsStale) && <p role="status" className={styles.menuIntro}>{!online ? 'You are offline. Your bag is saved on this device; place the order when you reconnect.' : 'Refresh the menu to confirm current prices and availability before ordering.'}</p>}{checkoutError && <p role="alert" className={styles.menuIntro}>{checkoutError}</p>}<button className={styles.checkoutButton} disabled={checkingOut || !online || menuIsStale} onClick={submitOrder}>{checkingOut ? 'PLACING ORDER…' : 'PLACE ORDER'} <ChevronRight size={17} /></button><button className={styles.continueShopping} onClick={() => setCartOpen(false)}>CONTINUE BROWSING</button></div></> : <div className={styles.emptyCart}><span><ShoppingBag size={24} /></span><h3>Something delicious<br />belongs in here.</h3><p>Take a look around and find your favorite.</p><button className={styles.primaryButton} onClick={() => { setCartOpen(false); goTo('menu'); }}>EXPLORE THE MENU <ArrowRight size={15} /></button></div>}
         </motion.aside>
       </>}</AnimatePresence>
@@ -415,7 +475,7 @@ function FeaturedDish({ dish, index, total, quantity, onAdd, onChange }: { dish:
   const imageOpacity = useTransform(scrollYProgress, [0, 0.16, 0.84, 1], reduceMotion ? [1, 1, 1, 1] : [0.45, 1, 1, 0.55]);
   return <article ref={ref} className={`${styles.featuredDish} ${index % 2 ? styles.featuredDishReverse : ''}`}>
     <motion.div className={styles.featuredDishImageFrame} style={{ y: imageY, scale: imageScale, opacity: imageOpacity }}>
-      <Image src={imageUrl(dish.image)} alt={dish.name} width={1200} height={900} unoptimized sizes="(max-width: 700px) 100vw, 58vw" className={styles.featuredDishImage} />
+      <MenuPhoto source={dish.image} alt={dish.name} className={styles.featuredDishImage} sizes="(max-width: 700px) 100vw, 58vw" fallbackClassName={styles.featuredImagePending} fallback={<><ChefHat size={34} aria-hidden="true" /><span>UPLOAD THIS DISH PHOTO TO MENU IMAGES</span></>} />
       <span className={styles.featuredImageNumber}>{dish.number} / {String(total).padStart(2, '0')}</span>
       <span className={styles.featuredImageCaption}>FRESH FROM THE HBA KITCHEN</span>
     </motion.div>
@@ -423,7 +483,8 @@ function FeaturedDish({ dish, index, total, quantity, onAdd, onChange }: { dish:
       <span className={styles.featuredDishNumber}>{dish.number} <i /> FEATURED DISH</span>
       <h3>{dish.name}</h3><p>{dish.description}</p>
       <strong className={styles.featuredPrice}>₱{dish.price}</strong>
-      {quantity ? <div className={styles.featuredOrderRow}><div className={styles.quantityControl}><button onClick={() => onChange(-1)} aria-label={`Remove one ${dish.name}`}><Minus size={15} /></button><span>{quantity}</span><button disabled={quantity >= 99} onClick={() => onChange(1)} aria-label={`Add one ${dish.name}`}><Plus size={15} /></button></div><button className={styles.featuredAddButton} onClick={onAdd}>ADD ANOTHER <Plus size={15} /></button></div> : <button className={styles.featuredAddButton} onClick={onAdd}>ADD TO CART <ArrowRight size={15} /></button>}
+      <span className={styles.stockNote}>{dish.availability !== 'Available' || dish.stockQuantity === 0 ? 'SOLD OUT' : `${dish.stockQuantity} servings available`}</span>
+      {quantity ? <div className={styles.featuredOrderRow}><div className={styles.quantityControl}><button onClick={() => onChange(-1)} aria-label={`Remove one ${dish.name}`}><Minus size={15} /></button><span>{quantity}</span><button disabled={quantity >= Math.min(99, dish.stockQuantity)} onClick={() => onChange(1)} aria-label={`Add one ${dish.name}`}><Plus size={15} /></button></div><button className={styles.featuredAddButton} disabled={dish.availability !== 'Available' || dish.stockQuantity === 0 || quantity >= Math.min(99, dish.stockQuantity)} onClick={onAdd}>{dish.availability !== 'Available' || dish.stockQuantity === 0 ? 'SOLD OUT' : 'ADD ANOTHER'} <Plus size={15} /></button></div> : <button className={styles.featuredAddButton} disabled={dish.availability !== 'Available' || dish.stockQuantity === 0} onClick={onAdd}>{dish.availability !== 'Available' || dish.stockQuantity === 0 ? 'SOLD OUT' : 'ADD TO CART'} <ArrowRight size={15} /></button>}
       <span className={styles.scrollHint}>KEEP SCROLLING <ArrowDown size={13} /></span>
     </motion.div>
   </article>;

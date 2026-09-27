@@ -1,10 +1,16 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { isAdminOnlyRoute, isCustomerOnlyRoute, isRmsRoute } from '@/lib/role-routing.mjs';
 
 export async function updateSession(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !key) return NextResponse.next({ request });
+  const pathname = request.nextUrl.pathname;
+  if (!url || !key) {
+    return isRmsRoute(pathname) || isCustomerOnlyRoute(pathname)
+      ? NextResponse.redirect(new URL('/login?error=configuration', request.url))
+      : NextResponse.next({ request });
+  }
 
   let response = NextResponse.next({ request });
   const supabase = createServerClient(url, key, {
@@ -20,8 +26,7 @@ export async function updateSession(request: NextRequest) {
 
   const { data: claimResult } = await supabase.auth.getClaims();
   const claims = claimResult?.claims;
-  const adminRoute = ['/dashboard', '/menu', '/orders', '/users', '/activity', '/reports', '/settings'].some(path => request.nextUrl.pathname === path || request.nextUrl.pathname.startsWith(`${path}/`));
-  if (adminRoute) {
+  if (isRmsRoute(pathname) || isCustomerOnlyRoute(pathname)) {
     if (!claims) {
       const destination = request.nextUrl.clone();
       destination.pathname = '/login';
@@ -30,9 +35,12 @@ export async function updateSession(request: NextRequest) {
     }
     const userId = typeof claims.sub === 'string' ? claims.sub : '';
     const { data: profile } = await supabase.from('profiles').select('role,status').eq('id', userId).maybeSingle();
-    if (!profile || profile.status !== 'ACTIVE' || !['ADMIN', 'STAFF'].includes(profile.role)) {
+    const allowedRole = isCustomerOnlyRoute(pathname)
+      ? profile?.role === 'CUSTOMER'
+      : profile?.role === 'ADMIN' || (profile?.role === 'STAFF' && !isAdminOnlyRoute(pathname));
+    if (!profile || profile.status !== 'ACTIVE' || !allowedRole) {
       const destination = request.nextUrl.clone();
-      destination.pathname = '/';
+      destination.pathname = (profile?.role === 'ADMIN' && isCustomerOnlyRoute(pathname)) || (profile?.role === 'STAFF' && isAdminOnlyRoute(pathname)) ? '/dashboard' : '/';
       destination.search = '';
       return NextResponse.redirect(destination);
     }

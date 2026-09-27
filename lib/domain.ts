@@ -1,7 +1,7 @@
 export type UserRole = 'ADMIN' | 'STAFF' | 'CUSTOMER';
 export type UserStatus = 'ACTIVE' | 'INACTIVE';
 export type OrderStatus = 'PENDING' | 'PREPARING' | 'READY' | 'COMPLETED' | 'CANCELLED';
-export type MenuCategory = 'Main Course' | 'Appetizer' | 'Dessert' | 'Beverages';
+export type MenuCategory = string;
 export type MenuAvailability = 'Available' | 'Sold Out';
 
 export interface User {
@@ -21,6 +21,7 @@ export interface MenuItem {
   price: number;
   description: string;
   availability: MenuAvailability;
+  stockQuantity: number;
   image: string;
 }
 

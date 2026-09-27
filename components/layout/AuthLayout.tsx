@@ -23,7 +23,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       </aside>
       <main className={styles.formPanel}>
         <div className={styles.formContent}>{children}</div>
-        <footer className={styles.formFooter}><span>HBA KITCHEN</span><span>GOOD FOOD, GOOD COMPANY.</span></footer>
+        <footer className={styles.formFooter}><span>HBA KITCHEN</span><span>GOOD FOOD, GOOD COMPANY.</span><Link href="/privacy-policy">PRIVACY POLICY</Link></footer>
       </main>
     </div>
   );

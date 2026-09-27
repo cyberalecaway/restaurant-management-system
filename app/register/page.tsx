@@ -151,6 +151,7 @@ export default function RegisterPage() {
             </Button>
           </form>
           <GoogleAuthButton online={online} disabled={loading || success} nextPath="/" />
+          <p className={styles.formPrivacyNote}>Your details help us manage your account and orders. <Link href="/privacy-policy">Read our Privacy Policy</Link>.</p>
           {!online && <p role="status" className={styles.infoMessage}>Offline: account registration needs an internet connection.</p>}
 
           <p className={styles.formFooterLink}>

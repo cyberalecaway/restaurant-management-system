@@ -12,12 +12,13 @@ import { createClient } from '@/lib/supabase/client';
 import { normalizeEmail, validateLoginInput } from '@/lib/input-validation.mjs';
 import { useOnlineStatus } from '@/lib/use-online-status';
 import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
-import { safeNextPath } from '@/lib/safe-next-path.mjs';
+import { getRoleRedirect } from '@/lib/role-routing.mjs';
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const cartSignIn = searchParams.get('reason') === 'add-to-cart';
+  const signedOut = searchParams.get('signedOut') === '1';
   const callbackError = searchParams.get('error');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -44,9 +45,22 @@ function LoginForm() {
         setLoading(false);
         return;
       }
+      const { data: userResult, error: userError } = await supabase.auth.getUser();
+      if (userError || !userResult.user) throw new Error('Your signed-in account could not be verified. Please try again.');
+      const { data: profile, error: profileError } = await supabase.from('profiles').select('role,status').eq('id', userResult.user.id).maybeSingle();
+      if (profileError || !profile) {
+        await supabase.auth.signOut();
+        setLocalAuthIndicator(false);
+        throw new Error('We could not load your HBA account profile. Please contact restaurant staff.');
+      }
+      const destination = getRoleRedirect(profile.role, profile.status, new URLSearchParams(window.location.search).get('next'));
+      if (!destination) {
+        await supabase.auth.signOut();
+        setLocalAuthIndicator(false);
+        throw new Error('This account is inactive or does not have an authorized HBA role. Please contact restaurant staff.');
+      }
       setLocalAuthIndicator(true);
-      const requestedPage = new URLSearchParams(window.location.search).get('next');
-      router.push(requestedPage ? safeNextPath(requestedPage, window.location.origin) : '/dashboard');
+      router.replace(destination);
     } catch (error) {
       setErrors({ general: error instanceof Error ? error.message : 'Unable to connect to Supabase.' });
       setLoading(false);
@@ -63,9 +77,11 @@ function LoginForm() {
           <p className={styles.formSubtitle}>Sign in to order from HBA Kitchen or manage restaurant operations.</p>
 
           {cartSignIn && <div className={styles.infoMessage} role="status">Sign in to add your selected dish. We’ll put it in your bag when you return.</div>}
+          {signedOut && <div className={styles.infoMessage} role="status">You have been signed out successfully.</div>}
 
           {errors.general && <div role="alert" className={styles.errorMessage}>{errors.general}</div>}
           {callbackError === 'oauth' && <div role="alert" className={styles.errorMessage}>Google sign-in was canceled or could not be completed. Try again or use email and password.</div>}
+          {callbackError === 'configuration' && <div role="alert" className={styles.errorMessage}>The Supabase project URL or publishable key is missing from this app configuration. Add them to the local environment and restart the app.</div>}
           {callbackError === 'auth' && <div role="alert" className={styles.errorMessage}>Authentication could not be completed. Please retry; the sign-in request or confirmation link may have expired.</div>}
           {callbackError === 'confirmation' && <div role="alert" className={styles.errorMessage}>This sign-in link could not be verified. Request a new confirmation or recovery link and try again.</div>}
           {!online && <div role="status" className={styles.infoMessage}>Offline: sign in needs an internet connection.</div>}

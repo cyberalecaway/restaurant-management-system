@@ -13,9 +13,9 @@ export function RecentOrders() {
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
+    const supabase = createClient();
     async function load() {
       try {
-        const supabase = createClient();
         const { data, error: queryError } = await supabase.from('orders').select('id,order_number,customer_name,status,subtotal,order_items(item_name,quantity)').order('created_at', { ascending: false }).limit(6);
         if (queryError) throw queryError;
         if (active) setOrders(data ?? []);
@@ -23,7 +23,10 @@ export function RecentOrders() {
       finally { if (active) setLoading(false); }
     }
     void load();
-    return () => { active = false; };
+    const channel = supabase.channel('rms-recent-orders')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => { void load(); })
+      .subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
   }, []);
 
   return <section className="overflow-hidden rounded-xl border border-[#e6e2d9] bg-[#fffefa] shadow-[0_2px_10px_rgba(32,43,47,0.04)]" aria-labelledby="recent-orders-title">

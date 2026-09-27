@@ -3,36 +3,43 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Banknote, BookOpen, ClipboardList, Plus, Users, ShoppingCart, ArrowUpRight, CircleCheck, Clock3, ChefHat, XCircle } from 'lucide-react';
+import { Banknote, BookOpen, ClipboardList, Plus, Users, ShoppingCart, ArrowUpRight, CircleCheck, Clock3, ChefHat, XCircle, Boxes } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { StatCard } from '@/components/dashboard/StatCard';
 import { RecentOrders } from '@/components/dashboard/RecentOrders';
 import { PopularItems } from '@/components/dashboard/PopularItems';
 import { createClient } from '@/lib/supabase/client';
 import { useOnlineStatus } from '@/lib/use-online-status';
+import { getInventoryStatus } from '@/lib/inventory-health.mjs';
 
 export default function DashboardPage() {
-  const [kpis, setKpis] = useState({ totalOrders: '—', revenue: '—', activeOrders: '—', menuItems: '—', staff: '—' });
+  const [kpis, setKpis] = useState({ totalOrders: '—', revenue: '—', activeOrders: '—', menuItems: '—', staff: '—', lowStock: '—', criticalStock: '—', outOfStock: '—' });
   const [orderCounts, setOrderCounts] = useState({ completed: 0, preparing: 0, pending: 0, cancelled: 0, ready: 0 });
   const [salesData, setSalesData] = useState<{ day: string; revenue: number }[]>([]);
   const [dashboardError, setDashboardError] = useState('');
+  const [inventoryWarning, setInventoryWarning] = useState('');
   const [recordLimitReached, setRecordLimitReached] = useState(false);
   const online = useOnlineStatus();
   useEffect(() => {
     let active = true;
+    const supabase = createClient();
     async function loadDashboard() {
       try {
-        const supabase = createClient();
-        const now = new Date();
-        const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(now);
-        const todayStart = new Date(`${todayKey}T00:00:00+08:00`);
-        const start = new Date(todayStart); start.setUTCDate(start.getUTCDate() - 6);
-        const [ordersResult, totalOrdersResult, menuResult, staffResult] = await Promise.all([
-          supabase.from('orders').select('status,subtotal,created_at').gte('created_at', start.toISOString()).order('created_at', { ascending: false }).limit(5000),
-          supabase.from('orders').select('id', { count: 'exact', head: true }),
-          supabase.from('menu_items').select('id', { count: 'exact', head: true }),
-          supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'STAFF').eq('status', 'ACTIVE'),
-        ]);
+      const now = new Date();
+      const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(now);
+      const todayStart = new Date(`${todayKey}T00:00:00+08:00`);
+      const start = new Date(todayStart); start.setUTCDate(start.getUTCDate() - 6);
+      const { data: authResult, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const { data: ownProfile, error: ownProfileError } = await supabase.from('profiles').select('role').eq('id', authResult.user?.id ?? '').maybeSingle();
+      if (ownProfileError) throw ownProfileError;
+      const isAdmin = ownProfile?.role === 'ADMIN';
+      const [ordersResult, totalOrdersResult, menuResult, staffResult] = await Promise.all([
+        supabase.from('orders').select('status,subtotal,created_at').gte('created_at', start.toISOString()).order('created_at', { ascending: false }).limit(5000),
+        supabase.from('orders').select('id', { count: 'exact', head: true }),
+        supabase.from('menu_items').select('id', { count: 'exact', head: true }).eq('availability', 'Available'),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'STAFF').eq('status', 'ACTIVE'),
+      ]);
         const issue = ordersResult.error ?? totalOrdersResult.error ?? menuResult.error ?? staffResult.error;
         if (issue) throw issue;
         const rows = ordersResult.data ?? [];
@@ -52,8 +59,18 @@ export default function DashboardPage() {
           cancelled: todayOrders.filter(row => row.status === 'CANCELLED').length,
           ready: todayOrders.filter(row => row.status === 'READY').length,
         };
+        const inventoryResult = isAdmin ? await supabase.from('inventory_items').select('quantity_on_hand,minimum_level,reorder_level').limit(5000) : null;
+        const inventoryCounts = inventoryResult && !inventoryResult.error
+          ? (inventoryResult.data ?? []).map(item => getInventoryStatus({ quantityOnHand: item.quantity_on_hand, minimumLevel: item.minimum_level, reorderLevel: item.reorder_level })).reduce((counts, status) => {
+              if (status.key === 'low') counts.low += 1;
+              if (status.key === 'critical') counts.critical += 1;
+              if (status.key === 'out') counts.out += 1;
+              return counts;
+            }, { low: 0, critical: 0, out: 0 })
+          : null;
         if (active) {
-          setKpis({ totalOrders: String(totalOrdersResult.count ?? 0), revenue: `₱${sumRevenue.toLocaleString('en-PH')}`, activeOrders: String(activeCount), menuItems: String(menuResult.count ?? 0), staff: String(staffResult.count ?? 0) });
+          setKpis({ totalOrders: String(totalOrdersResult.count ?? 0), revenue: `₱${sumRevenue.toLocaleString('en-PH')}`, activeOrders: String(activeCount), menuItems: String(menuResult.count ?? 0), staff: String(staffResult.count ?? 0), lowStock: inventoryCounts ? String(inventoryCounts.low) : isAdmin ? '—' : 'Admin only', criticalStock: inventoryCounts ? String(inventoryCounts.critical) : isAdmin ? '—' : 'Admin only', outOfStock: inventoryCounts ? String(inventoryCounts.out) : isAdmin ? '—' : 'Admin only' });
+          setInventoryWarning(isAdmin && inventoryResult?.error ? 'Inventory totals are unavailable. Apply supabase/inventory-stock-system.sql after the existing inventory migrations.' : '');
           setOrderCounts(counts);
           setRecordLimitReached(rows.length === 5000);
           setSalesData(Array.from({ length: 7 }, (_, index) => {
@@ -65,7 +82,12 @@ export default function DashboardPage() {
       } catch (error) { if (active) setDashboardError(error instanceof Error ? error.message : 'Could not load dashboard data.'); }
     }
     void loadDashboard();
-    return () => { active = false; };
+    const channel = supabase.channel('rms-dashboard-live-data')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => { void loadDashboard(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => { void loadDashboard(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, () => { void loadDashboard(); })
+      .subscribe();
+    return () => { active = false; void supabase.removeChannel(channel); };
   }, []);
   const statusRows = [
     { label: 'Completed', value: orderCounts.completed, color: 'bg-green-600', Icon: CircleCheck },
@@ -84,15 +106,19 @@ export default function DashboardPage() {
       </div>
 
       {dashboardError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">Dashboard data is unavailable: {dashboardError}. Confirm Supabase configuration, schema, and account access.</p>}
+      {inventoryWarning && <p role="status" className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">{inventoryWarning}</p>}
       {!online && <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Offline: showing data already loaded. Refreshing needs an internet connection.</p>}
       {recordLimitReached && <p role="status" className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">The chart reached the 5,000 order limit, so recent sales totals may be incomplete.</p>}
 
-      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         <StatCard icon={<ShoppingCart size={20} className="text-[#c6272e]" />} label="Total Orders" value={kpis.totalOrders} iconBg="bg-[#fae9e5]" />
         <StatCard icon={<Banknote size={20} className="text-[#c6272e]" />} label="Today’s Revenue" value={kpis.revenue} iconBg="bg-[#fae9e5]" />
         <StatCard icon={<ClipboardList size={20} className="text-[#344348]" />} label="Active Orders" value={kpis.activeOrders} iconBg="bg-[#ecefeb]" />
-        <StatCard icon={<BookOpen size={20} className="text-[#344348]" />} label="Menu Items" value={kpis.menuItems} iconBg="bg-[#ecefeb]" />
+        <StatCard icon={<BookOpen size={20} className="text-[#344348]" />} label="Available Menu Items" value={kpis.menuItems} iconBg="bg-[#ecefeb]" />
         <StatCard icon={<Users size={20} className="text-[#344348]" />} label="Active Staff" value={kpis.staff} iconBg="bg-[#ecefeb]" />
+        <StatCard icon={<Boxes size={20} className="text-[#344348]" />} label="Low Stock" value={kpis.lowStock} iconBg="bg-[#ecefeb]" />
+        <StatCard icon={<Boxes size={20} className="text-amber-700" />} label="Critical Stock" value={kpis.criticalStock} iconBg="bg-amber-50" />
+        <StatCard icon={<Boxes size={20} className="text-red-700" />} label="Out of Stock" value={kpis.outOfStock} iconBg="bg-red-50" />
       </div>
 
       <div className="mb-5 grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -133,7 +159,6 @@ export default function DashboardPage() {
           <div className="space-y-2">
             <Link href="/menu?new=1" className="flex min-h-12 items-center gap-3 rounded-lg border border-[#e6e2d9] px-3 text-sm font-medium text-[#344348] hover:border-[#d92f2f]/40 hover:bg-[#fff8f6]"><Plus size={18} className="text-[#c6272e]" /> Add menu item</Link>
             <Link href="/orders" className="flex min-h-12 items-center gap-3 rounded-lg border border-[#e6e2d9] px-3 text-sm font-medium text-[#344348] hover:border-[#d92f2f]/40 hover:bg-[#fff8f6]"><ClipboardList size={18} className="text-[#c6272e]" /> View orders</Link>
-            <Link href="/users" className="flex min-h-12 items-center gap-3 rounded-lg border border-[#e6e2d9] px-3 text-sm font-medium text-[#344348] hover:border-[#d92f2f]/40 hover:bg-[#fff8f6]"><Users size={18} className="text-[#c6272e]" /> Manage staff</Link>
             <Link href="/reports" className="flex min-h-12 items-center gap-3 rounded-lg border border-[#e6e2d9] px-3 text-sm font-medium text-[#344348] hover:border-[#d92f2f]/40 hover:bg-[#fff8f6]"><ArrowUpRight size={18} className="text-[#c6272e]" /> View reports</Link>
           </div>
         </section>
