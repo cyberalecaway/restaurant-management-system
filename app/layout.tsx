@@ -8,8 +8,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "HBA Filipino Restaurant Management System",
-  description: "HBA RMS – Authentic Pinoy flavors managed with institutional precision.",
+  title: "HBA Kitchen | Good food, good company",
+  description: "Thoughtfully made comfort food, with a little HBA heart in every bite. Order your favorites from HBA Kitchen.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

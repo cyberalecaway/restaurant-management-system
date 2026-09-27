@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Conversation } from '@/lib/mock-data';
+import { Conversation } from '@/lib/domain';
 
 interface ConversationListProps {
   conversations: Conversation[];

@@ -45,6 +45,7 @@ export function Button({
         ${sizeStyles[size]}
         ${className}
       `}
+      aria-busy={isLoading}
       disabled={disabled || isLoading}
       {...props}
     >

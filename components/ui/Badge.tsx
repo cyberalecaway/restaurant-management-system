@@ -2,7 +2,7 @@
 
 import React from 'react';
 
-type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'red' | 'admin' | 'staff';
+type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral' | 'red' | 'admin' | 'staff' | 'customer';
 
 interface BadgeProps {
   children: React.ReactNode;
@@ -17,8 +17,9 @@ const variantStyles: Record<BadgeVariant, string> = {
   info:    'bg-blue-100 text-blue-700 border border-blue-200',
   neutral: 'bg-gray-100 text-gray-600 border border-gray-200',
   red:     'bg-red-100 text-red-700 border border-red-200',
-  admin:   'bg-purple-100 text-purple-700 border border-purple-200',
-  staff:   'bg-blue-100 text-blue-700 border border-blue-200',
+  admin:   'bg-red-50 text-red-800 border border-red-200',
+  staff:   'bg-gray-100 text-gray-700 border border-gray-200',
+  customer:'bg-blue-50 text-blue-700 border border-blue-200',
 };
 
 export function Badge({ children, variant = 'neutral', className = '' }: BadgeProps) {
@@ -33,6 +34,7 @@ export function OrderStatusBadge({ status }: { status: string }) {
   const map: Record<string, BadgeVariant> = {
     PENDING:   'warning',
     PREPARING: 'info',
+    READY:      'success',
     COMPLETED: 'success',
     CANCELLED: 'danger',
   };
@@ -49,7 +51,7 @@ export function UserStatusBadge({ status }: { status: string }) {
 
 export function UserRoleBadge({ role }: { role: string }) {
   return (
-    <Badge variant={role === 'ADMIN' ? 'admin' : 'staff'}>
+    <Badge variant={role === 'ADMIN' ? 'admin' : role === 'CUSTOMER' ? 'customer' : 'staff'}>
       {role}
     </Badge>
   );

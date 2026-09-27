@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "lenis/dist/lenis.css";
 
 @theme {
   --color-hba-red: #D92F2F;
@@ -25,9 +26,84 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid #e74652;
+  outline-offset: 3px;
+}
+
+.rmsWorkspace {
+  font-size: 16px;
+  --rms-surface: #fffefa;
+  --rms-border: #e6e2d9;
+}
+
+.rmsWorkspace main h1 {
+  color: #202b2f;
+  font-size: clamp(1.5rem, 2vw, 1.875rem);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+
+.rmsWorkspace [class~="bg-white"] {
+  background-color: #fffefa;
+}
+
+.rmsWorkspace [class*="border-[#DDE3E8]"],
+.rmsWorkspace [class*="border-[#F0F3F6]"] {
+  border-color: #e6e2d9;
+}
+
+.rmsWorkspace [class*="text-[#1A2332]"] {
+  color: #202b2f;
+}
+
+.rmsWorkspace input:not([type="checkbox"]),
+.rmsWorkspace select,
+.rmsWorkspace textarea {
+  min-height: 44px;
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.rmsWorkspace button:not([aria-label="Open navigation menu"]) {
+  transition-duration: 160ms;
+}
+
+.rmsWorkspace [class~="text-xs"],
+.rmsWorkspace [class*="text-[10px]"],
+.rmsWorkspace [class*="text-[9px]"],
+.rmsWorkspace [class*="text-[8px]"] {
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+}
+
+.rmsWorkspace [class~="text-sm"] {
+  font-size: 16px !important;
+  line-height: 1.45 !important;
+}
+
+.rmsWorkspace [class*="text-[#9BAAB8]"],
+.rmsWorkspace [class*="text-white/50"] {
+  color: #66737f !important;
+}
+
+.rmsWorkspace aside [class*="text-white/50"] {
+  color: #d5dce0 !important;
 }
 
 /* Scrollbar styling */

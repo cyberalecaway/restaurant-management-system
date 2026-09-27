@@ -1,202 +1,159 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { Plus, Search, Users, ShieldCheck, UserCheck, UserX } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { RefreshCw, Search, ShieldCheck, UserCheck, UserX, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
-import { Input, PasswordInput, Select } from '@/components/ui/Input';
-import { UserStatusBadge, UserRoleBadge } from '@/components/ui/Badge';
-import { mockUsers, User, UserRole, UserStatus } from '@/lib/mock-data';
+import { UserRoleBadge, UserStatusBadge } from '@/components/ui/Badge';
+import { Pagination } from '@/components/ui/Table';
+import { User, UserRole, UserStatus } from '@/lib/domain';
+import { createClient } from '@/lib/supabase/client';
+import { useOnlineStatus } from '@/lib/use-online-status';
 
-interface NewStaffForm {
-  fullName: string;
-  email: string;
-  mobile: string;
-  role: string;
-  password: string;
-}
-
-const EMPTY: NewStaffForm = { fullName: '', email: '', mobile: '', role: 'STAFF', password: '' };
+const PAGE_SIZE = 10;
+const RECORD_LIMIT = 500;
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<User[]>(mockUsers);
+  const [users, setUsers] = useState<User[]>([]);
+  const [currentUserId, setCurrentUserId] = useState('');
+  const [canManageUsers, setCanManageUsers] = useState(false);
   const [search, setSearch] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<NewStaffForm>(EMPTY);
-  const [formErrors, setFormErrors] = useState<Partial<NewStaffForm>>({});
+  const [userFilter, setUserFilter] = useState('ALL');
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState('');
+  const [dataError, setDataError] = useState('');
+  const online = useOnlineStatus();
 
-  const filtered = useMemo(() =>
-    users.filter(u =>
-      u.fullName.toLowerCase().includes(search.toLowerCase()) ||
-      u.email.toLowerCase().includes(search.toLowerCase()) ||
-      u.id.toLowerCase().includes(search.toLowerCase())
-    ), [users, search]);
+  async function loadUsers() {
+    setLoading(true);
+    setDataError('');
+    try {
+      const supabase = createClient();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      const userId = authData.user?.id ?? '';
+      setCurrentUserId(userId);
+      const { data: ownProfile, error: profileError } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle();
+      if (profileError) throw profileError;
+      setCanManageUsers(ownProfile?.role === 'ADMIN');
+      const { data, error } = await supabase.from('profiles').select('id,full_name,email,mobile,role,status,created_at').order('created_at', { ascending: false }).limit(RECORD_LIMIT);
+      if (error) throw error;
+      setUsers((data ?? []).map(row => ({
+        id: row.id,
+        fullName: row.full_name || 'Name not provided',
+        email: row.email,
+        mobile: row.mobile ?? '',
+        role: row.role as UserRole,
+        status: row.status as UserStatus,
+      })));
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not load accounts. Check your connection and Supabase permissions.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadUsers(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const filtered = useMemo(() => users.filter(user =>
+    (userFilter === 'ALL' || user.role === userFilter || user.status === userFilter) &&
+    `${user.fullName} ${user.email} ${user.id}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
+  ), [users, search, userFilter]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const stats = useMemo(() => ({
-    total:    users.length,
-    admins:   users.filter(u => u.role === 'ADMIN').length,
-    active:   users.filter(u => u.status === 'ACTIVE').length,
-    inactive: users.filter(u => u.status === 'INACTIVE').length,
+    total: users.length,
+    admins: users.filter(user => user.role === 'ADMIN').length,
+    active: users.filter(user => user.status === 'ACTIVE').length,
+    inactive: users.filter(user => user.status === 'INACTIVE').length,
   }), [users]);
 
-  function set(field: keyof NewStaffForm) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      setForm(f => ({ ...f, [field]: e.target.value }));
-      setFormErrors(fe => ({ ...fe, [field]: undefined }));
-    };
-  }
-
-  function validate(): Partial<NewStaffForm> {
-    const errs: Partial<NewStaffForm> = {};
-    if (!form.fullName.trim()) errs.fullName = 'Full name is required.';
-    if (!form.email.trim()) errs.email = 'Email is required.';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Invalid email.';
-    if (!form.mobile.trim()) errs.mobile = 'Mobile is required.';
-    if (!form.role) errs.role = 'Role is required.';
-    if (!form.password || form.password.length < 8) errs.password = 'Minimum 8 characters.';
-    return errs;
-  }
-
-  function handleAdd() {
-    const errs = validate();
-    if (Object.keys(errs).length) { setFormErrors(errs); return; }
-    const newUser: User = {
-      id: `ID-${Math.floor(Math.random() * 100) + 100}`,
-      fullName: form.fullName,
-      email: form.email,
-      mobile: form.mobile,
-      role: form.role as UserRole,
-      status: 'ACTIVE',
-    };
-    setUsers(prev => [newUser, ...prev]);
-    setModalOpen(false);
-    setForm(EMPTY);
-  }
-
-  function toggleStatus(id: string) {
-    setUsers(prev => prev.map(u =>
-      u.id === id ? { ...u, status: (u.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE') as UserStatus } : u
-    ));
+  async function toggleStatus(user: User) {
+    if (!canManageUsers || user.id === currentUserId || !online) return;
+    const nextStatus: UserStatus = user.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    const isLastActiveAdmin = user.role === 'ADMIN' && user.status === 'ACTIVE' && users.filter(candidate => candidate.role === 'ADMIN' && candidate.status === 'ACTIVE').length <= 1;
+    if (isLastActiveAdmin) {
+      setDataError('The last active administrator cannot be deactivated. Promote another administrator first.');
+      return;
+    }
+    setSavingId(user.id);
+    setDataError('');
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from('profiles').update({ status: nextStatus }).eq('id', user.id);
+      if (error) throw error;
+      setUsers(current => current.map(item => item.id === user.id ? { ...item, status: nextStatus } : item));
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not update this account.');
+    } finally {
+      setSavingId('');
+    }
   }
 
   return (
-    <DashboardLayout searchPlaceholder="Search personnel...">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+    <DashboardLayout searchPlaceholder="Search accounts...">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-lg font-bold text-[#1A2332]">HBA Branch Personnel</h1>
-          <p className="text-sm text-[#9BAAB8] mt-0.5">Manage staff accounts and access privileges</p>
+          <h1 className="text-lg font-bold text-[#1A2332]">User Management</h1>
+          <p className="mt-0.5 text-sm text-[#9BAAB8]">Real Supabase accounts, roles, and access status</p>
         </div>
-        <Button onClick={() => { setForm(EMPTY); setFormErrors({}); setModalOpen(true); }}>
-          <Plus size={15} /> Add Branch Staff
+        <Button variant="outline" onClick={() => void loadUsers()} disabled={!online || loading} isLoading={loading}>
+          <RefreshCw size={15} /> Refresh
         </Button>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+      {dataError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{dataError}</p>}
+      {!online && <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Offline: account records are read-only until the connection returns.</p>}
+      {users.length === RECORD_LIMIT && <p role="status" className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">Showing the newest {RECORD_LIMIT} accounts. Narrow your search or use database pagination for older records.</p>}
+      {!canManageUsers && !loading && <p className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-[#5e6966]">Only an active administrator can change account status. New public registrations receive the customer role.</p>}
+
+      <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { icon: <Users size={18} className="text-[#D92F2F]" />, label: 'Total User Profiles', value: stats.total, bg: 'bg-red-50' },
-          { icon: <ShieldCheck size={18} className="text-purple-600" />, label: 'Admin Privileges', value: stats.admins, bg: 'bg-purple-50' },
-          { icon: <UserCheck size={18} className="text-green-600" />, label: 'Active Staff Members', value: stats.active, bg: 'bg-green-50' },
-          { icon: <UserX size={18} className="text-gray-400" />, label: 'Inactive Accounts', value: stats.inactive, bg: 'bg-gray-50' },
-        ].map(card => (
-          <div key={card.label} className="bg-white border border-[#DDE3E8] rounded-lg p-4 flex items-center gap-3 shadow-sm">
-            <div className={`${card.bg} w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0`}>{card.icon}</div>
-            <div>
-              <p className="text-xs text-[#6B7A8D] font-medium">{card.label}</p>
-              <p className="text-xl font-bold text-[#1A2332]">{card.value}</p>
-            </div>
-          </div>
-        ))}
+          { icon: <Users size={18} className="text-[#D92F2F]" />, label: 'Profiles', value: stats.total, bg: 'bg-red-50' },
+          { icon: <ShieldCheck size={18} className="text-[#344348]" />, label: 'Admins', value: stats.admins, bg: 'bg-[#ecefeb]' },
+          { icon: <UserCheck size={18} className="text-green-700" />, label: 'Active accounts', value: stats.active, bg: 'bg-green-50' },
+          { icon: <UserX size={18} className="text-gray-400" />, label: 'Inactive accounts', value: stats.inactive, bg: 'bg-gray-50' },
+        ].map(card => <div key={card.label} className="flex items-center gap-3 rounded-lg border border-[#DDE3E8] bg-white p-4 shadow-sm"><div className={`${card.bg} flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg`}>{card.icon}</div><div><p className="text-xs font-medium text-[#6B7A8D]">{card.label}</p><p className="text-xl font-bold text-[#1A2332]">{card.value}</p></div></div>)}
       </div>
 
-      {/* Table card */}
-      <div className="bg-white border border-[#DDE3E8] rounded-lg shadow-sm">
-        {/* Search bar */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#DDE3E8]">
-          <h3 className="text-sm font-semibold text-[#1A2332]">Staff Directory</h3>
-          <div className="relative">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#9BAAB8]" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search personnel..."
-              className="pl-8 pr-3 py-1.5 text-xs bg-[#F4F6F8] border border-[#DDE3E8] rounded-md outline-none focus:border-[#D92F2F] placeholder:text-[#9BAAB8] text-[#1A2332] w-48"
-            />
+      <div className="overflow-hidden rounded-lg border border-[#DDE3E8] bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-[#DDE3E8] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <h2 className="text-sm font-semibold text-[#1A2332]">Account Directory</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1 overflow-x-auto" role="group" aria-label="Filter accounts">
+              {(['ALL', 'ADMIN', 'STAFF', 'CUSTOMER', 'ACTIVE', 'INACTIVE']).map(value => <button key={value} type="button" aria-pressed={userFilter === value} onClick={() => { setUserFilter(value); setPage(1); }} className={`min-h-10 rounded-lg px-3 text-sm font-medium ${userFilter === value ? 'bg-[#202b2f] text-white' : 'text-[#5e6966] hover:bg-[#f7f6f2]'}`}>{value === 'ALL' ? 'All' : value[0] + value.slice(1).toLocaleLowerCase()}</button>)}
+            </div>
+            <label className="relative">
+              <span className="sr-only">Search accounts</span>
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#9BAAB8]" />
+              <input type="search" maxLength={120} value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search accounts..." className="w-48 rounded-md border border-[#DDE3E8] bg-[#F4F6F8] py-2 pl-8 pr-3 text-xs text-[#1A2332] outline-none focus:border-[#D92F2F]" />
+            </label>
           </div>
         </div>
-
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#F0F3F6] bg-[#F8FAFC]">
-                {['ID', 'Full Name', 'Email Address', 'Mobile No.', 'System Role', 'Status', 'Action'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[#6B7A8D] uppercase tracking-wide whitespace-nowrap">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
+            <thead><tr className="border-b border-[#F0F3F6] bg-[#F8FAFC]">{['Profile ID', 'Full Name', 'Email', 'Mobile', 'Role', 'Status', 'Action'].map(label => <th key={label} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7A8D]">{label}</th>)}</tr></thead>
             <tbody>
-              {filtered.map(user => (
-                <tr key={user.id} className="border-b border-[#F0F3F6] hover:bg-[#FAFBFC] transition-colors">
-                  <td className="px-4 py-3 text-xs font-mono font-semibold text-[#6B7A8D]">{user.id}</td>
-                  <td className="px-4 py-3 text-xs font-medium text-[#1A2332] whitespace-nowrap">{user.fullName}</td>
-                  <td className="px-4 py-3 text-xs text-[#6B7A8D]">{user.email}</td>
-                  <td className="px-4 py-3 text-xs text-[#6B7A8D] whitespace-nowrap">{user.mobile}</td>
-                  <td className="px-4 py-3"><UserRoleBadge role={user.role} /></td>
-                  <td className="px-4 py-3"><UserStatusBadge status={user.status} /></td>
-                  <td className="px-4 py-3">
-                    <button
-                      onClick={() => toggleStatus(user.id)}
-                      className={`text-xs px-2.5 py-1 rounded border font-medium transition-colors ${
-                        user.status === 'ACTIVE'
-                          ? 'text-gray-500 border-gray-200 hover:bg-red-50 hover:text-red-600 hover:border-red-200'
-                          : 'text-green-600 border-green-200 hover:bg-green-50'
-                      }`}
-                    >
-                      {user.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {filtered.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-[#9BAAB8] text-sm">No personnel found.</td>
-                </tr>
-              )}
+              {paginated.map(user => <tr key={user.id} className="border-b border-[#F0F3F6] transition-colors hover:bg-[#FAFBFC]">
+                <td className="px-4 py-3 font-mono text-xs font-semibold text-[#6B7A8D]">{user.id.slice(0, 8)}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-xs font-medium text-[#1A2332]">{user.fullName}</td>
+                <td className="px-4 py-3 text-xs text-[#6B7A8D]">{user.email}</td>
+                <td className="whitespace-nowrap px-4 py-3 text-xs text-[#6B7A8D]">{user.mobile || '—'}</td>
+                <td className="px-4 py-3"><UserRoleBadge role={user.role} /></td>
+                <td className="px-4 py-3"><UserStatusBadge status={user.status} /></td>
+                <td className="px-4 py-3">{canManageUsers && <button type="button" disabled={!online || savingId === user.id || user.id === currentUserId || (user.role === 'ADMIN' && user.status === 'ACTIVE' && stats.admins <= 1)} onClick={() => void toggleStatus(user)} className="rounded border border-[#DDE3E8] px-2.5 py-1 text-xs font-medium text-[#5e6966] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50">{savingId === user.id ? 'Saving…' : user.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}</button>}</td>
+              </tr>)}
+              {!loading && paginated.length === 0 && <tr><td colSpan={7} className="px-4 py-10 text-center text-sm text-[#9BAAB8]">{dataError ? 'Accounts could not be loaded.' : 'No accounts match this filter.'}</td></tr>}
+              {loading && <tr><td colSpan={7} role="status" className="px-4 py-10 text-center text-sm text-[#9BAAB8]">Loading accounts…</td></tr>}
             </tbody>
           </table>
         </div>
+        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} totalItems={filtered.length} itemsPerPage={PAGE_SIZE} itemLabel="accounts" />
       </div>
-
-      {/* Add Staff Modal */}
-      <Modal
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        title="Add Branch Staff"
-        subtitle="Create a new staff or admin account"
-      >
-        <div className="space-y-4">
-          <Input label="Full Name" placeholder="e.g. Maria Clara" value={form.fullName} onChange={set('fullName')} error={formErrors.fullName} />
-          <Input label="Email Address" type="email" placeholder="e.g. m.clara@hba-bites.ph" value={form.email} onChange={set('email')} error={formErrors.email} />
-          <Input label="Mobile Number" type="tel" placeholder="e.g. 09171234567" value={form.mobile} onChange={set('mobile')} error={formErrors.mobile} />
-          <Select
-            label="System Role"
-            value={form.role}
-            onChange={set('role') as (e: React.ChangeEvent<HTMLSelectElement>) => void}
-            error={formErrors.role}
-            options={[{ value: 'STAFF', label: 'Staff' }, { value: 'ADMIN', label: 'Admin' }]}
-          />
-          <PasswordInput label="Initial Password" placeholder="Minimum 8 characters" value={form.password} onChange={set('password')} error={formErrors.password} />
-          <div className="flex gap-3 pt-2">
-            <Button variant="outline" className="flex-1" onClick={() => setModalOpen(false)}>Cancel</Button>
-            <Button className="flex-1" onClick={handleAdd}>Add Staff Member</Button>
-          </div>
-        </div>
-      </Modal>
     </DashboardLayout>
   );
 }

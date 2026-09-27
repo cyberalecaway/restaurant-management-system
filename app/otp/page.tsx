@@ -1,194 +1,93 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { Button } from '@/components/ui/Button';
-import { DEMO_OTP } from '@/lib/mock-data';
+import { Input } from '@/components/ui/Input';
+import { createClient } from '@/lib/supabase/client';
+import { setLocalAuthIndicator } from '@/lib/auth-session';
 import { ShieldCheck } from 'lucide-react';
+import styles from '@/components/layout/AuthLayout.module.css';
 
 const OTP_LENGTH = 6;
-const COUNTDOWN_SECONDS = 59;
 
 export default function OTPPage() {
   const router = useRouter();
+  const [email, setEmail] = useState(() => typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('email') ?? '');
   const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
-  const [canResend, setCanResend] = useState(false);
+  const [sent, setSent] = useState(false);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  useEffect(() => {
-    inputRefs.current[0]?.focus();
-  }, []);
+  useEffect(() => { inputRefs.current[0]?.focus(); }, []);
 
-  useEffect(() => {
-    if (countdown <= 0) { setCanResend(true); return; }
-    const timer = setTimeout(() => setCountdown(c => c - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [countdown]);
-
-  function handleChange(index: number, value: string) {
-    if (!/^\d*$/.test(value)) return;
-    const newOtp = [...otp];
-    newOtp[index] = value.slice(-1);
-    setOtp(newOtp);
+  function setDigit(index: number, value: string) {
+    const digit = value.replace(/\D/g, '').slice(-1);
+    setOtp(current => current.map((currentDigit, currentIndex) => currentIndex === index ? digit : currentDigit));
     setError('');
-    if (value && index < OTP_LENGTH - 1) {
-      inputRefs.current[index + 1]?.focus();
-    }
+    if (digit && index < OTP_LENGTH - 1) inputRefs.current[index + 1]?.focus();
   }
 
-  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Backspace') {
-      if (!otp[index] && index > 0) {
-        const newOtp = [...otp];
-        newOtp[index - 1] = '';
-        setOtp(newOtp);
-        inputRefs.current[index - 1]?.focus();
-      }
-    } else if (e.key === 'ArrowLeft' && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    } else if (e.key === 'ArrowRight' && index < OTP_LENGTH - 1) {
-      inputRefs.current[index + 1]?.focus();
-    }
-  }
-
-  function handlePaste(e: React.ClipboardEvent) {
-    e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_LENGTH);
-    if (pasted.length) {
-      const newOtp = Array(OTP_LENGTH).fill('');
-      pasted.split('').forEach((char, i) => { newOtp[i] = char; });
-      setOtp(newOtp);
-      inputRefs.current[Math.min(pasted.length, OTP_LENGTH - 1)]?.focus();
-    }
-  }
-
-  function handleResend() {
-    if (!canResend) return;
-    setOtp(Array(OTP_LENGTH).fill(''));
-    setError('');
-    setCountdown(COUNTDOWN_SECONDS);
-    setCanResend(false);
-    inputRefs.current[0]?.focus();
-  }
-
-  async function handleVerify() {
+  async function handleVerify(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     const code = otp.join('');
-    if (code.length < OTP_LENGTH) { setError('Please enter all 6 digits.'); return; }
+    if (!email.trim()) { setError('Enter the email address you registered with.'); return; }
+    if (code.length !== OTP_LENGTH) { setError('Enter all 6 digits before continuing.'); return; }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 700));
-    if (code === DEMO_OTP) {
+    try {
+      const supabase = createClient();
+      const { error: verifyError } = await supabase.auth.verifyOtp({ email: email.trim(), token: code, type: 'signup' });
+      if (verifyError) { setError(verifyError.message); setLoading(false); return; }
+      setLocalAuthIndicator(true);
       setSuccess(true);
-      setTimeout(() => router.push('/dashboard'), 1000);
-    } else {
-      setError(`Invalid OTP. Use demo code: ${DEMO_OTP}`);
+      window.setTimeout(() => router.push('/'), 700);
+    } catch (verifyError) {
+      setError(verifyError instanceof Error ? verifyError.message : 'Unable to verify your email.');
       setLoading(false);
     }
   }
 
-  const formatted = String(countdown).padStart(2, '0');
+  async function handleResend() {
+    if (!email.trim()) { setError('Enter your email address before requesting a new code.'); return; }
+    setLoading(true);
+    try {
+      const supabase = createClient();
+      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: email.trim() });
+      if (resendError) setError(resendError.message);
+      else { setSent(true); setError(''); }
+    } catch (resendError) {
+      setError(resendError instanceof Error ? resendError.message : 'Unable to resend the code.');
+    }
+    setLoading(false);
+  }
 
-  return (
-    <AuthLayout>
-      <div className="w-full max-w-[300px]">
-        <div className="bg-white border border-[#DDE3E8] rounded-xl shadow-md p-7">
-          {/* Logo */}
-          <div className="flex justify-center mb-3">
-            <div className="w-14 h-14 rounded-xl overflow-hidden bg-white border border-[#DDE3E8] shadow-sm">
-              <Image
-                src="/hbatube_logo.png.png"
-                alt="HBA Logo"
-                width={56}
-                height={56}
-                className="object-contain w-full h-full"
-              />
-            </div>
-          </div>
+  function handlePaste(event: React.ClipboardEvent<HTMLFieldSetElement>) {
+    const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, OTP_LENGTH);
+    if (!pasted) return;
+    event.preventDefault();
+    setOtp(Array.from({ length: OTP_LENGTH }, (_, index) => pasted[index] ?? ''));
+  }
 
-          {/* Verification icon */}
-          <div className="flex justify-center mb-4">
-            <div className="w-14 h-14 rounded-full bg-red-50 border-2 border-red-100 flex items-center justify-center">
-              <ShieldCheck size={28} className="text-[#D92F2F]" />
-            </div>
-          </div>
-
-          <h1 className="text-center text-base font-bold text-[#1A2332] mb-1">
-            Verify Your Account
-          </h1>
-          <p className="text-center text-xs text-[#9BAAB8] mb-6 leading-relaxed">
-            We sent a 6-digit verification code to your email/phone. Enter it below to proceed.
-          </p>
-
-          {/* Demo hint */}
-          <div className="mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded-md text-xs text-blue-700 text-center">
-            Demo OTP: <span className="font-bold tracking-widest">{DEMO_OTP}</span>
-          </div>
-
-          {error && (
-            <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-md text-xs text-red-600 text-center">
-              {error}
-            </div>
-          )}
-          {success && (
-            <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-md text-xs text-green-700 text-center">
-              Verified! Redirecting…
-            </div>
-          )}
-
-          {/* OTP inputs */}
-          <div className="flex gap-2 justify-center mb-5" onPaste={handlePaste}>
-            {otp.map((digit, i) => (
-              <input
-                key={i}
-                ref={el => { inputRefs.current[i] = el; }}
-                type="text"
-                inputMode="numeric"
-                maxLength={1}
-                value={digit}
-                onChange={e => handleChange(i, e.target.value)}
-                onKeyDown={e => handleKeyDown(i, e)}
-                className={`
-                  w-10 h-11 text-center text-base font-bold rounded-md border outline-none transition-colors
-                  ${digit ? 'border-[#D92F2F] bg-red-50 text-[#D92F2F]' : 'border-[#DDE3E8] bg-white text-[#1A2332]'}
-                  focus:border-[#D92F2F] focus:ring-2 focus:ring-red-100
-                `}
-              />
-            ))}
-          </div>
-
-          <Button onClick={handleVerify} className="w-full" isLoading={loading} size="lg">
-            Verify OTP
-          </Button>
-
-          {/* Resend */}
-          <div className="mt-4 text-center space-y-1">
-            {!canResend && (
-              <p className="text-xs text-[#9BAAB8]">
-                Resend in <span className="font-semibold text-[#1A2332]">00:{formatted}</span>
-              </p>
-            )}
-            <button
-              onClick={handleResend}
-              disabled={!canResend}
-              className="text-xs text-[#D92F2F] font-medium hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Resend OTP
-            </button>
-          </div>
-
-          <p className="mt-4 text-center text-xs text-[#9BAAB8]">
-            <Link href="/login" className="text-[#D92F2F] font-medium hover:underline">
-              ← Back to Login
-            </Link>
-          </p>
-        </div>
-      </div>
-    </AuthLayout>
-  );
+  return <AuthLayout><div className={styles.darkControls}><div className={styles.formCard}>
+    <p className={styles.formEyebrow}>EMAIL VERIFICATION</p><div className={styles.otpIcon}><ShieldCheck size={24} aria-hidden="true" /></div>
+    <h1 className={styles.formTitle}>Verify your<br />account<em>.</em></h1>
+    <p className={styles.formSubtitle}>Enter the one-time code sent to your email address.</p>
+    {error && <div className={styles.errorMessage} role="alert">{error}</div>}
+    {success && <div className={styles.successMessage} role="status">Email verified. Continuing to HBA Kitchen…</div>}
+    {sent && <div className={styles.successMessage} role="status">A new confirmation code has been sent.</div>}
+    <form onSubmit={handleVerify} noValidate className="space-y-4">
+      <Input label="Email Address" type="email" value={email} onChange={event => setEmail(event.target.value)} autoComplete="email" required />
+      <fieldset onPaste={handlePaste} className={styles.otpFieldset}>
+        <legend className={styles.otpLegend}>6-DIGIT VERIFICATION CODE</legend>
+        <div className={styles.otpDigits}>{otp.map((digit, index) => <input key={index} ref={element => { inputRefs.current[index] = element; }} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={1} autoComplete={index === 0 ? 'one-time-code' : 'off'} value={digit} onChange={event => setDigit(index, event.target.value)} aria-label={`Verification digit ${index + 1} of ${OTP_LENGTH}`} required />)}</div>
+      </fieldset>
+      <Button type="submit" className="w-full" isLoading={loading} size="lg">Verify email</Button>
+    </form>
+    <button type="button" disabled={loading} onClick={handleResend} className="mt-4 min-h-11 w-full text-sm font-semibold text-[#d92f2f] hover:underline disabled:opacity-60">Resend confirmation code</button>
+    <p className={styles.formFooterLink}><Link href="/register">Back to registration</Link></p>
+  </div></div></AuthLayout>;
 }

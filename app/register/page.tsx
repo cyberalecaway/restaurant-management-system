@@ -1,18 +1,22 @@
-'use client';
+﻿'use client';
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { AuthLayout } from '@/components/layout/AuthLayout';
-import { Input, PasswordInput, Select } from '@/components/ui/Input';
+import { Input, PasswordInput } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
+import styles from '@/components/layout/AuthLayout.module.css';
+import { createClient } from '@/lib/supabase/client';
+import { setLocalAuthIndicator } from '@/lib/auth-session';
+import { normalizeEmail, normalizeWhitespace, validateRegistrationInput } from '@/lib/input-validation.mjs';
+import { useOnlineStatus } from '@/lib/use-online-status';
+import { GoogleAuthButton } from '@/components/auth/GoogleAuthButton';
 
 interface FormData {
   fullName: string;
   email: string;
   mobile: string;
-  role: string;
   password: string;
   confirmPassword: string;
 }
@@ -21,7 +25,6 @@ interface FormErrors {
   fullName?: string;
   email?: string;
   mobile?: string;
-  role?: string;
   password?: string;
   confirmPassword?: string;
 }
@@ -29,72 +32,63 @@ interface FormErrors {
 export default function RegisterPage() {
   const router = useRouter();
   const [form, setForm] = useState<FormData>({
-    fullName: '', email: '', mobile: '', role: '', password: '', confirmPassword: '',
+    fullName: '', email: '', mobile: '', password: '', confirmPassword: '',
   });
   const [errors, setErrors] = useState<FormErrors>({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const online = useOnlineStatus();
 
   function set(field: keyof FormData) {
-    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    return (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setForm(f => ({ ...f, [field]: e.target.value }));
+      setErrors(current => ({ ...current, [field]: undefined }));
+      setSuccess(false);
+    };
   }
 
   function validate(): FormErrors {
-    const errs: FormErrors = {};
-    if (!form.fullName.trim()) errs.fullName = 'Full name is required.';
-    if (!form.email.trim()) errs.email = 'Email is required.';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Enter a valid email.';
-    if (!form.mobile.trim()) errs.mobile = 'Mobile number is required.';
-    else if (!/^(09|\+639)\d{9}$/.test(form.mobile.replace(/\s/g, ''))) errs.mobile = 'Enter a valid PH mobile number.';
-    if (!form.role) errs.role = 'Please select a role.';
-    if (!form.password) errs.password = 'Password is required.';
-    else if (form.password.length < 8) errs.password = 'Password must be at least 8 characters.';
-    if (!form.confirmPassword) errs.confirmPassword = 'Please confirm your password.';
-    else if (form.password !== form.confirmPassword) errs.confirmPassword = 'Passwords do not match.';
-    return errs;
+    return validateRegistrationInput(form) as FormErrors;
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
+    if (!online) { setErrors({ email: 'You are offline. Reconnect before creating an account.' }); return; }
     setErrors({});
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.signUp({
+        email: normalizeEmail(form.email),
+        password: form.password,
+        options: { data: { full_name: normalizeWhitespace(form.fullName), mobile: form.mobile.replace(/[\s()-]/g, '') }, emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
+      });
+      if (error) { setErrors({ email: error.message }); setLoading(false); return; }
+      if (data.session) {
+        setLocalAuthIndicator(true);
+        router.push('/');
+        return;
+      }
+      setSuccess(true);
+    } catch (error) {
+      setErrors({ email: error instanceof Error ? error.message : 'Unable to connect to Supabase.' });
+    }
     setLoading(false);
-    setSuccess(true);
-    setTimeout(() => router.push('/otp'), 1200);
   }
 
   return (
     <AuthLayout>
-      <div className="w-full max-w-[320px]">
-        <div className="bg-white border border-[#DDE3E8] rounded-xl shadow-md p-7">
-          {/* Logo */}
-          <div className="flex justify-center mb-4">
-            <div className="w-14 h-14 rounded-xl overflow-hidden bg-white border border-[#DDE3E8] shadow-sm">
-              <Image
-                src="/hbatube_logo.png.png"
-                alt="HBA Logo"
-                width={56}
-                height={56}
-                className="object-contain w-full h-full"
-              />
-            </div>
-          </div>
-
-          <h1 className="text-center text-base font-bold text-[#1A2332] mb-1">
-            Register RMS Account
-          </h1>
-          <p className="text-center text-xs text-[#9BAAB8] mb-5">
-            Create staff/admin profile to join your branch
-          </p>
+      <div className={styles.darkControls}>
+        <div className={styles.formCard}>
+          <p className={styles.formEyebrow}>JOIN THE HBA TABLE</p>
+          <h1 className={styles.formTitle}>Create your<br />account<em>.</em></h1>
+          <p className={styles.formSubtitle}>Create your HBA Kitchen customer account.</p>
 
           {success && (
-            <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-md text-xs text-green-700">
-              Account created! Redirecting to OTP verification…
-            </div>
+            <div className={styles.successMessage} role="status" aria-live="polite">
+              Account created. Check your email for a confirmation link before signing in.</div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3" noValidate>
@@ -105,6 +99,9 @@ export default function RegisterPage() {
               value={form.fullName}
               onChange={set('fullName')}
               error={errors.fullName}
+              autoComplete="name"
+              maxLength={120}
+              required
             />
             <Input
               label="Email Address"
@@ -113,6 +110,9 @@ export default function RegisterPage() {
               value={form.email}
               onChange={set('email')}
               error={errors.email}
+              autoComplete="email"
+              maxLength={254}
+              required
             />
             <Input
               label="Mobile Number"
@@ -121,17 +121,9 @@ export default function RegisterPage() {
               value={form.mobile}
               onChange={set('mobile')}
               error={errors.mobile}
-            />
-            <Select
-              label="Role"
-              value={form.role}
-              onChange={set('role')}
-              error={errors.role}
-              placeholder="Select Staff/Admin Role"
-              options={[
-                { value: 'STAFF', label: 'Staff' },
-                { value: 'ADMIN', label: 'Admin' },
-              ]}
+              autoComplete="tel"
+              maxLength={20}
+              required
             />
             <PasswordInput
               label="Password"
@@ -139,6 +131,9 @@ export default function RegisterPage() {
               value={form.password}
               onChange={set('password')}
               error={errors.password}
+              autoComplete="new-password"
+              maxLength={128}
+              required
             />
             <PasswordInput
               label="Confirm Password"
@@ -146,17 +141,22 @@ export default function RegisterPage() {
               value={form.confirmPassword}
               onChange={set('confirmPassword')}
               error={errors.confirmPassword}
+              autoComplete="new-password"
+              maxLength={128}
+              required
             />
 
-            <Button type="submit" className="w-full mt-1" isLoading={loading} size="lg">
+            <Button type="submit" className="w-full mt-1" isLoading={loading} disabled={!online || success} size="lg">
               Register
             </Button>
           </form>
+          <GoogleAuthButton online={online} disabled={loading || success} nextPath="/" />
+          {!online && <p role="status" className={styles.infoMessage}>Offline: account registration needs an internet connection.</p>}
 
-          <p className="mt-5 text-center text-xs text-[#9BAAB8]">
+          <p className={styles.formFooterLink}>
             Already have an account?{' '}
-            <Link href="/login" className="text-[#D92F2F] font-medium hover:underline">
-              Login
+            <Link href="/login">
+              Sign in
             </Link>
           </p>
         </div>

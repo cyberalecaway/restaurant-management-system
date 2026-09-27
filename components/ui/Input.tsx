@@ -25,6 +25,7 @@ export function Input({
       {label && (
         <label htmlFor={inputId} className="text-sm font-medium text-[#1A2332]">
           {label}
+          {props.required && <span className="ml-1 text-[#D92F2F]" aria-hidden="true">*</span>}
         </label>
       )}
       <div className="relative">
@@ -35,6 +36,9 @@ export function Input({
         )}
         <input
           id={inputId}
+          aria-required={Boolean(props.required)}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${inputId}-error` : undefined}
           className={`
             w-full px-3 py-2 text-sm text-[#1A2332] bg-white
             border rounded-md outline-none transition-colors
@@ -52,12 +56,12 @@ export function Input({
           </div>
         )}
       </div>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p id={`${inputId}-error`} className="text-xs text-red-500" role="alert">{error}</p>}
     </div>
   );
 }
 
-interface PasswordInputProps extends Omit<InputProps, 'type'> {}
+type PasswordInputProps = Omit<InputProps, 'type'>;
 
 export function PasswordInput({ label, error, className, ...props }: PasswordInputProps) {
   const [show, setShow] = useState(false);
@@ -71,8 +75,9 @@ export function PasswordInput({ label, error, className, ...props }: PasswordInp
         <button
           type="button"
           onClick={() => setShow(!show)}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          aria-pressed={show}
           className="text-[#9BAAB8] hover:text-[#6B7A8D] transition-colors"
-          tabIndex={-1}
         >
           {show ? <EyeOff size={16} /> : <Eye size={16} />}
         </button>
@@ -96,10 +101,14 @@ export function Select({ label, error, options, placeholder, className = '', id,
       {label && (
         <label htmlFor={selectId} className="text-sm font-medium text-[#1A2332]">
           {label}
+          {props.required && <span className="ml-1 text-[#D92F2F]" aria-hidden="true">*</span>}
         </label>
       )}
       <select
         id={selectId}
+        aria-required={Boolean(props.required)}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${selectId}-error` : undefined}
         className={`
           w-full px-3 py-2 text-sm text-[#1A2332] bg-white
           border rounded-md outline-none transition-colors cursor-pointer
@@ -113,7 +122,7 @@ export function Select({ label, error, options, placeholder, className = '', id,
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p id={`${selectId}-error`} className="text-xs text-red-500" role="alert">{error}</p>}
     </div>
   );
 }

@@ -1,208 +1,160 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { Search, Download, Activity, CalendarDays, Users, Clock } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Activity, CalendarDays, Clock, Download, RefreshCw, Search, Users } from 'lucide-react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/Button';
 import { Pagination } from '@/components/ui/Table';
-import { mockActivityLogs, ActionType } from '@/lib/mock-data';
+import { createClient } from '@/lib/supabase/client';
+import { useOnlineStatus } from '@/lib/use-online-status';
 
-const ITEMS_PER_PAGE = 8;
-
-const ACTION_OPTIONS = [
-  { value: '', label: 'All Actions' },
-  { value: 'Login successful', label: 'Login' },
-  { value: 'Updated menu item price', label: 'Menu Update' },
-  { value: 'Created order', label: 'Order Created' },
-  { value: 'Deactivated user account', label: 'User Deactivated' },
-  { value: 'Backup automatic routine', label: 'System Backup' },
-  { value: 'Refund request', label: 'Refund' },
-  { value: 'Added menu item', label: 'Menu Added' },
-  { value: 'Staff account created', label: 'Staff Created' },
-  { value: 'Password changed', label: 'Password Changed' },
-  { value: 'Logout', label: 'Logout' },
-];
-
-const USER_OPTIONS = [
-  { value: '', label: 'All Users' },
-  { value: 'Admin User', label: 'Admin User' },
-  { value: 'Maria Santos', label: 'Maria Santos' },
-  { value: 'Juan Dela Cruz', label: 'Juan Dela Cruz' },
-  { value: 'Regine Velasquez', label: 'Regine Velasquez' },
-  { value: 'System Agent', label: 'System Agent' },
-  { value: 'Apolinario Mabini', label: 'Apolinario Mabini' },
-];
-
+const PAGE_SIZE = 10;
+const RECORD_LIMIT = 500;
 const ACTION_COLORS: Record<string, string> = {
-  'Login successful':        'bg-green-100 text-green-700',
-  'Updated menu item price': 'bg-amber-100 text-amber-700',
-  'Created order':           'bg-blue-100 text-blue-700',
-  'Deactivated user account':'bg-red-100 text-red-700',
-  'Backup automatic routine':'bg-gray-100 text-gray-600',
-  'Refund request':          'bg-orange-100 text-orange-700',
-  'Added menu item':         'bg-purple-100 text-purple-700',
-  'Deleted menu item':       'bg-red-100 text-red-700',
-  'Staff account created':   'bg-teal-100 text-teal-700',
-  'Password changed':        'bg-indigo-100 text-indigo-700',
-  'Logout':                  'bg-gray-100 text-gray-500',
+  'Added menu item': 'bg-purple-100 text-purple-700',
+  'Updated menu item': 'bg-amber-100 text-amber-700',
+  'Deleted menu item': 'bg-red-100 text-red-700',
+  'Created order': 'bg-blue-100 text-blue-700',
+  'Changed order status': 'bg-indigo-100 text-indigo-700',
+  'Updated user access': 'bg-teal-100 text-teal-700',
 };
 
-function exportCSV(data: typeof mockActivityLogs) {
-  const headers = ['ID', 'Timestamp', 'User', 'Role', 'Action', 'Details', 'IP Address'];
-  const rows = data.map(log => [
-    log.id, log.timestamp, log.user, log.userRole, log.action, log.details, log.ipAddress,
-  ]);
-  const csv = [headers, ...rows].map(row => row.map(v => `"${v}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
+type ActivityRow = {
+  id: string;
+  actor_id: string | null;
+  action: string;
+  details: string;
+  created_at: string;
+  profiles: { full_name: string; role: string } | null;
+};
+
+function csvCell(value: unknown) {
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function exportCSV(rows: ActivityRow[]) {
+  const headers = ['ID', 'Timestamp', 'Actor', 'Role', 'Action', 'Details'];
+  const body = rows.map(row => [row.id, row.created_at, row.profiles?.full_name || row.actor_id || 'System', row.profiles?.role || 'SYSTEM', row.action, row.details]);
+  const csv = [headers, ...body].map(row => row.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'hba-activity-logs.csv';
-  a.click();
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'hba-activity-logs.csv';
+  link.click();
   URL.revokeObjectURL(url);
 }
 
 export default function ActivityPage() {
+  const [logs, setLogs] = useState<ActivityRow[]>([]);
   const [search, setSearch] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [userFilter, setUserFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
+  const [now, setNow] = useState(0);
+  const online = useOnlineStatus();
 
-  const filtered = useMemo(() =>
-    mockActivityLogs.filter(log => {
-      const matchesSearch = !search ||
-        log.user.toLowerCase().includes(search.toLowerCase()) ||
-        log.action.toLowerCase().includes(search.toLowerCase()) ||
-        log.details.toLowerCase().includes(search.toLowerCase());
-      const matchesAction = !actionFilter || log.action === actionFilter;
-      const matchesUser = !userFilter || log.user === userFilter;
-      return matchesSearch && matchesAction && matchesUser;
-    }), [search, actionFilter, userFilter]);
+  async function loadLogs() {
+    setLoading(true);
+    setDataError('');
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.from('activity_logs')
+        .select('id,actor_id,action,details,created_at,profiles!activity_logs_actor_id_fkey(full_name,role)')
+        .order('created_at', { ascending: false }).limit(RECORD_LIMIT);
+      if (error) throw error;
+      setLogs((data ?? []) as unknown as ActivityRow[]);
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : 'Could not load audit records. Check your connection and Supabase setup.');
+    } finally {
+      setLoading(false);
+    }
+  }
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
-  const paginated = filtered.slice((page - 1) * ITEMS_PER_PAGE, page * ITEMS_PER_PAGE);
+  useEffect(() => {
+    const loadTimer = window.setTimeout(() => { void loadLogs(); }, 0);
+    const clockTimer = window.setTimeout(() => setNow(Date.now()), 0);
+    return () => { window.clearTimeout(loadTimer); window.clearTimeout(clockTimer); };
+  }, []);
+
+  const actions = useMemo(() => Array.from(new Set(logs.map(log => log.action))).sort(), [logs]);
+  const users = useMemo(() => Array.from(new Set(logs.map(log => log.profiles?.full_name || log.actor_id || 'System'))).sort(), [logs]);
+  const filtered = useMemo(() => logs.filter(log => {
+    const name = log.profiles?.full_name || log.actor_id || 'System';
+    const matchesSearch = `${name} ${log.action} ${log.details}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+    return matchesSearch && (!actionFilter || log.action === actionFilter) && (!userFilter || name === userFilter);
+  }), [logs, search, actionFilter, userFilter]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const todayKey = now ? new Date(now).toLocaleDateString('en-CA') : '';
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const todayCount = now ? logs.filter(log => new Date(log.created_at).toLocaleDateString('en-CA') === todayKey).length : 0;
+  const weekLogs = logs.filter(log => new Date(log.created_at).getTime() >= weekAgo);
+  const uniqueActors = new Set(weekLogs.map(log => log.actor_id).filter(Boolean)).size;
 
   function getInitials(name: string) {
-    return name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+    return name.split(' ').filter(Boolean).map(word => word[0]).slice(0, 2).join('').toUpperCase() || '?';
   }
 
   return (
     <DashboardLayout searchPlaceholder="Search activity logs...">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-lg font-bold text-[#1A2332]">System Activity Audit Log</h1>
-          <p className="text-sm text-[#9BAAB8] mt-0.5">Complete audit trail of all system operations</p>
+          <p className="mt-0.5 text-sm text-[#9BAAB8]">Recorded changes from the Supabase database</p>
         </div>
-        <Button variant="outline" onClick={() => exportCSV(filtered)}>
-          <Download size={15} /> Export Logs
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => void loadLogs()} disabled={!online || loading} isLoading={loading}><RefreshCw size={15} /> Refresh</Button>
+          <Button variant="outline" onClick={() => exportCSV(filtered)} disabled={filtered.length === 0}><Download size={15} /> Export CSV</Button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+      {dataError && <p role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{dataError}</p>}
+      {!online && <p role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Offline: showing the records already loaded. Refreshing needs an internet connection.</p>}
+      {logs.length === RECORD_LIMIT && <p role="status" className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">Showing the newest {RECORD_LIMIT} events.</p>}
+
+      <div className="mb-5 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[
-          { icon: <Clock size={18} className="text-[#D92F2F]" />, label: "Today's Activities", value: 48, bg: 'bg-red-50' },
-          { icon: <Activity size={18} className="text-blue-600" />, label: 'This Week Logs', value: 312, bg: 'bg-blue-50' },
-          { icon: <Users size={18} className="text-green-600" />, label: 'Active Users Now', value: 8, bg: 'bg-green-50' },
-        ].map(card => (
-          <div key={card.label} className="bg-white border border-[#DDE3E8] rounded-lg p-4 flex items-center gap-3 shadow-sm">
-            <div className={`${card.bg} w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0`}>{card.icon}</div>
-            <div>
-              <p className="text-xs text-[#6B7A8D] font-medium">{card.label}</p>
-              <p className="text-xl font-bold text-[#1A2332]">{card.value}</p>
-            </div>
-          </div>
-        ))}
+          { icon: <Clock size={18} className="text-[#D92F2F]" />, label: 'Events Today', value: todayCount, bg: 'bg-red-50' },
+          { icon: <Activity size={18} className="text-blue-600" />, label: 'Events This Week', value: weekLogs.length, bg: 'bg-blue-50' },
+          { icon: <Users size={18} className="text-green-600" />, label: 'Distinct Actors This Week', value: uniqueActors, bg: 'bg-green-50' },
+        ].map(card => <div key={card.label} className="flex items-center gap-3 rounded-lg border border-[#DDE3E8] bg-white p-4 shadow-sm"><div className={`${card.bg} flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg`}>{card.icon}</div><div><p className="text-xs font-medium text-[#6B7A8D]">{card.label}</p><p className="text-xl font-bold text-[#1A2332]">{card.value}</p></div></div>)}
       </div>
 
-      {/* Filters + Table */}
-      <div className="bg-white border border-[#DDE3E8] rounded-lg shadow-sm">
-        {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-3 px-5 py-4 border-b border-[#DDE3E8]">
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#9BAAB8]" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => { setSearch(e.target.value); setPage(1); }}
-              placeholder="Search audit logs..."
-              className="w-full pl-8 pr-3 py-2 text-sm bg-[#F4F6F8] border border-[#DDE3E8] rounded-md outline-none focus:border-[#D92F2F] placeholder:text-[#9BAAB8] text-[#1A2332]"
-            />
-          </div>
-          <select
-            value={actionFilter}
-            onChange={e => { setActionFilter(e.target.value); setPage(1); }}
-            className="px-3 py-2 text-sm bg-white border border-[#DDE3E8] rounded-md outline-none focus:border-[#D92F2F] text-[#1A2332] cursor-pointer"
-          >
-            {ACTION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <select
-            value={userFilter}
-            onChange={e => { setUserFilter(e.target.value); setPage(1); }}
-            className="px-3 py-2 text-sm bg-white border border-[#DDE3E8] rounded-md outline-none focus:border-[#D92F2F] text-[#1A2332] cursor-pointer"
-          >
-            {USER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <div className="flex items-center gap-2 ml-auto">
-            <CalendarDays size={14} className="text-[#9BAAB8]" />
-            <span className="text-sm text-[#6B7A8D] font-medium">Today</span>
-          </div>
+      <div className="overflow-hidden rounded-lg border border-[#DDE3E8] bg-white shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 border-b border-[#DDE3E8] px-5 py-4">
+          <label className="relative min-w-[180px] max-w-xs flex-1">
+            <span className="sr-only">Search audit events</span><Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#9BAAB8]" />
+            <input type="search" maxLength={160} value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search audit events..." className="w-full rounded-md border border-[#DDE3E8] bg-[#F4F6F8] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#D92F2F]" />
+          </label>
+          <select aria-label="Filter by action" value={actionFilter} onChange={event => { setActionFilter(event.target.value); setPage(1); }} className="rounded-md border border-[#DDE3E8] bg-white px-3 py-2 text-sm outline-none focus:border-[#D92F2F]"><option value="">All Actions</option>{actions.map(action => <option key={action} value={action}>{action}</option>)}</select>
+          <select aria-label="Filter by user" value={userFilter} onChange={event => { setUserFilter(event.target.value); setPage(1); }} className="rounded-md border border-[#DDE3E8] bg-white px-3 py-2 text-sm outline-none focus:border-[#D92F2F]"><option value="">All Users</option>{users.map(user => <option key={user} value={user}>{user}</option>)}</select>
+          <div className="ml-auto flex items-center gap-2 text-sm font-medium text-[#6B7A8D]"><CalendarDays size={14} /> Live records</div>
         </div>
 
-        {/* Table */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#F0F3F6] bg-[#F8FAFC]">
-                {['Timestamp', 'User Profile', 'Action', 'Details / Affected Target', 'IP Address'].map(h => (
-                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[#6B7A8D] uppercase tracking-wide whitespace-nowrap">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
+            <thead><tr className="border-b border-[#F0F3F6] bg-[#F8FAFC]">{['Timestamp', 'User Profile', 'Action', 'Details / Affected Target'].map(label => <th key={label} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#6B7A8D]">{label}</th>)}</tr></thead>
             <tbody>
-              {paginated.map(log => (
-                <tr key={log.id} className="border-b border-[#F0F3F6] hover:bg-[#FAFBFC] transition-colors">
-                  <td className="px-4 py-3 text-xs text-[#6B7A8D] whitespace-nowrap font-mono">{log.timestamp}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-full bg-[#1E2A2F] flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-                        {getInitials(log.user)}
-                      </div>
-                      <div>
-                        <p className="text-xs font-medium text-[#1A2332] whitespace-nowrap">{log.user}</p>
-                        <p className="text-[10px] text-[#9BAAB8]">{log.userRole}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${ACTION_COLORS[log.action] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {log.action}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-[#6B7A8D] max-w-[200px]">{log.details}</td>
-                  <td className="px-4 py-3 text-xs font-mono text-[#9BAAB8] whitespace-nowrap">{log.ipAddress}</td>
-                </tr>
-              ))}
-              {paginated.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-[#9BAAB8] text-sm">No logs found.</td>
-                </tr>
-              )}
+              {paginated.map(log => {
+                const user = log.profiles?.full_name || (log.actor_id ? `User ${log.actor_id.slice(0, 8)}` : 'System');
+                return <tr key={log.id} className="border-b border-[#F0F3F6] transition-colors hover:bg-[#FAFBFC]">
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-[#6B7A8D]">{new Date(log.created_at).toLocaleString('en-PH')}</td>
+                  <td className="px-4 py-3"><div className="flex items-center gap-2"><div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-[#1E2A2F] text-[10px] font-bold text-white">{getInitials(user)}</div><div><p className="whitespace-nowrap text-xs font-medium text-[#1A2332]">{user}</p><p className="text-[10px] text-[#9BAAB8]">{log.profiles?.role ?? 'System'}</p></div></div></td>
+                  <td className="px-4 py-3"><span className={`inline-flex rounded px-2 py-0.5 text-[11px] font-semibold ${ACTION_COLORS[log.action] ?? 'bg-gray-100 text-gray-600'}`}>{log.action}</span></td>
+                  <td className="max-w-[360px] break-words px-4 py-3 text-xs text-[#6B7A8D]">{log.details}</td>
+                </tr>;
+              })}
+              {!loading && paginated.length === 0 && <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-[#9BAAB8]">{dataError ? 'Audit records could not be loaded.' : 'No recorded events match this filter.'}</td></tr>}
+              {loading && <tr><td colSpan={4} role="status" className="px-4 py-10 text-center text-sm text-[#9BAAB8]">Loading audit records…</td></tr>}
             </tbody>
           </table>
         </div>
-
-        <Pagination
-          currentPage={page}
-          totalPages={totalPages}
-          onPageChange={setPage}
-          totalItems={filtered.length}
-          itemsPerPage={ITEMS_PER_PAGE}
-          itemLabel="log entries"
-        />
+        <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} totalItems={filtered.length} itemsPerPage={PAGE_SIZE} itemLabel="events" />
       </div>
     </DashboardLayout>
   );
